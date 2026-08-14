@@ -164,6 +164,12 @@ static void PrintFramework()
 #if EMULATE_HALT
   state_flags_to_check |= 0x10; // halted
 #endif
+#if HAVE_ARMv5
+  const char *blx = "blx";
+#elif HAVE_ARMv4_ARM9
+  // this messes with arm_op_count but this is the framework so who cares
+  const char *blx = "mov lr,pc\n  bx";
+#endif
 
   ot(";@ --------------------------- Framework --------------------------\n");
   if (ms) ot("CycloneRun\n");
@@ -312,6 +318,9 @@ static void PrintFramework()
   MemHandler(0,2);
 #ifdef MEMHANDLERS_DIRECT_PREFIX
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
+#elif HAVE_ARMv4_ARM9
+  ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
+  ot("  %s r3 ;@ Call checkpc()\n",blx);
 #else
   ot("  mov lr,pc\n");
   ot("  ldr pc,[r7,#0x64] ;@ Call checkpc()\n");
@@ -497,6 +506,9 @@ static void PrintFramework()
   ot("  str r1,[r7,#0x60] ;@ Memory base\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
+ #elif HAVE_ARMv4_ARM9
+  ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
+  ot("  %s r3 ;@ Call checkpc()\n",blx);
  #else
   ot("  mov lr,pc\n");
   ot("  ldr pc,[r7,#0x64] ;@ Call checkpc()\n");
@@ -606,11 +618,17 @@ static void PrintFramework()
   ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
 #endif
   ot("  ldr r3,[r7,#0x8c] ;@ IrqCallback\n");
+#if !HAVE_ARMv5
   ot("  add lr,pc,#4*3\n");
+#endif
   ot("  tst r3,r3\n");
   ot("  streqb r3,[r7,#0x47] ;@ just clear IRQ if there is no callback\n");
   ot("  mvneq r0,#0 ;@ and simulate -1 return\n");
+#if HAVE_ARMv5
+  ot("  blxne r3\n");
+#else
   ot("  bxne r3\n");
+#endif
 #if INT_ACK_CHANGES_CYCLES
   ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
 #endif
@@ -631,33 +649,19 @@ static void PrintFramework()
   ot(";@ Read IRQ Vector:\n");
   MemHandler(0,2,0,0);
   ot("  tst r0,r0 ;@ uninitialized int vector?\n");
-  ot("  moveq r0,#0x3c\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
+  ot("  moveq r0,#0x3c\n");
   ot("  bleq %sread32 ;@ Call read32(r0) handler\n", MEMHANDLERS_DIRECT_PREFIX);
+ #elif HAVE_ARMv4_ARM9
+  ot("  ldreq r3,[r7,#0x70]\n");
+  ot("  moveq r0,#0x3c\n");
+  ot("  %seq r3 ;@ Call read32(r0) handler\n",blx);
  #else
+  ot("  moveq r0,#0x3c\n");
   ot("  moveq lr,pc\n");
   ot("  ldreq pc,[r7,#0x70] ;@ Call read32(r0) handler\n");
  #endif
-#if USE_CHECKPC_CALLBACK
-  ot("  add lr,pc,#4\n");
-  ot("  add r0,r0,r11 ;@ r0 = Memory Base + New PC\n");
- #ifdef MEMHANDLERS_DIRECT_PREFIX
-  ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
- #else
-  ot("  ldr pc,[r7,#0x64] ;@ Call checkpc()\n");
- #endif
- #if EMULATE_ADDRESS_ERRORS_JUMP
-  ot("  mov r4,r0\n");
- #else
-  ot("  bic r4,r0,#1\n");
- #endif
-#else
-  ot("  add r4,r0,r11 ;@ r4 = Memory Base + New PC\n");
- #if EMULATE_ADDRESS_ERRORS_JUMP
-  ot("  bic r4,r4,#1\n");
- #endif
-#endif
-  ot("\n");
+  CheckPc(11,0);
 
   // 4. Obtain a new context and resume instruction processing.
   // note: the obtain part was already done in previous steps
@@ -726,27 +730,7 @@ static void PrintFramework()
   ot("  mov r0,r8,lsr #24\n");
   ot("  mov r0,r0,lsl #2\n");
   MemHandler(0,2,0,0);
-  ot("  ldr r3,[r7,#0x60] ;@ Get Memory base\n");
-#if USE_CHECKPC_CALLBACK
-  ot("  add lr,pc,#4\n");
-  ot("  add r0,r0,r3 ;@ r0 = Memory Base + New PC\n");
- #ifdef MEMHANDLERS_DIRECT_PREFIX
-  ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
- #else
-  ot("  ldr pc,[r7,#0x64] ;@ Call checkpc()\n");
- #endif
- #if EMULATE_ADDRESS_ERRORS_JUMP
-  ot("  mov r4,r0\n");
- #else
-  ot("  bic r4,r0,#1\n");
- #endif
-#else
-  ot("  add r4,r0,r3 ;@ r4 = Memory Base + New PC\n");
- #if EMULATE_ADDRESS_ERRORS_JUMP
-  ot("  bic r4,r4,#1\n");
- #endif
-#endif
-  ot("\n");
+  CheckPc(-1,0);
 
   // 4. Resume execution.
 #if EMULATE_ADDRESS_ERRORS_JUMP
@@ -860,26 +844,15 @@ static void PrintFramework()
   ot(";@ Read Exception Vector:\n");
   ot("  mov r0,#0x0c\n");
   MemHandler(0,2,0,0);
-  ot("  ldr r3,[r7,#0x60] ;@ Get Memory base\n");
-#if USE_CHECKPC_CALLBACK
-  ot("  add lr,pc,#4\n");
-  ot("  add r0,r0,r3 ;@ r0 = Memory Base + New PC\n");
- #ifdef MEMHANDLERS_DIRECT_PREFIX
-  ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
- #else
-  ot("  ldr pc,[r7,#0x64] ;@ Call checkpc()\n");
- #endif
-  ot("  mov r4,r0\n");
-#else
-  ot("  add r4,r0,r3 ;@ r4 = Memory Base + New PC\n");
-#endif
-  ot("\n");
+  CheckPc(-1,0);
 
-#if EMULATE_ADDRESS_ERRORS_JUMP && EMULATE_HALT
+#if EMULATE_ADDRESS_ERRORS_JUMP
+ #if EMULATE_HALT
   ot("  tst r4,#1\n");
   ot("  bne ExceptionAddressError_r_prg_r4\n");
-#else
+ #else
   ot("  bic r4,r4,#1\n");
+ #endif
 #endif
 
   // 4. Resume execution.
@@ -989,10 +962,16 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
 
   sprintf(what, "%s%d", type==0 ? "read" : (type==1 ? "write" : "fetch"), 8<<size);
 
+#if !defined(MEMHANDLERS_DIRECT_PREFIX) && HAVE_ARMv4_ARM9
+  ot("  ldr r3,[r7,#0x%x] ;@ %s handler\n",func,what); // helps to prevent interlocks
+#endif
+
 #if EMULATE_ADDRESS_ERRORS_IO
   if (size > 0 && need_addrerr_check)
   {
+ #if !defined(MEMHANDLERS_DIRECT_PREFIX) && !HAVE_ARMv5
     ot("  add lr,pc,#4*%i\n", addrreg==0?2:3); // helps to prevent interlocks
+ #endif
     if (addrreg != 0) ot("  mov r0,r%i\n", addrreg);
     ot("  tst r0,#1 ;@ address error?\n");
     switch (type) {
@@ -1009,6 +988,10 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
     ot("  mov r0,r%i\n", addrreg);
   ot("  bl %s%s ;@ Call ", MEMHANDLERS_DIRECT_PREFIX, what);
   (void)func; // avoid warning
+#elif HAVE_ARMv5
+  if (addrreg != 0)
+    ot("  mov r0,r%i\n", addrreg);
+  ot("  blx r3 ;@ Call ");
 #else
   if (addrreg != 0)
   {
@@ -1017,7 +1000,11 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
   }
   else
     ot("  mov lr,pc\n");
+ #if HAVE_ARMv4_ARM9
+  ot("  bx r3 ;@ Call ");
+ #else
   ot("  ldr pc,[r7,#0x%x] ;@ Call ",func);
+ #endif
 #endif
 
   // Document what we are calling:
@@ -1062,11 +1049,15 @@ static void PrintOpcodes()
   ot("  mov r1,r10,lsr #28\n");
   ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
   ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
-  ot("  ldr r11,[r7,#0x94] ;@ UnrecognizedCallback\n");
-  ot("  tst r11,r11\n");
-  ot("  moveq r0,#0\n");
-  ot("  movne lr,pc\n");
-  ot("  bxne r11 ;@ call UnrecognizedCallback if it is defined\n");
+  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
+#if HAVE_ARMv5
+  ot("  tst r0,r0\n");
+  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#else
+  ot("  add lr,pc,#4\n");
+  ot("  tst r0,r0\n");
+  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#endif
   ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
   ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
   ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
@@ -1092,11 +1083,15 @@ static void PrintOpcodes()
   ot("  mov r1,r10,lsr #28\n");
   ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
   ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
-  ot("  ldr r11,[r7,#0x94] ;@ UnrecognizedCallback\n");
-  ot("  tst r11,r11\n");
-  ot("  moveq r0,#0\n");
-  ot("  movne lr,pc\n");
-  ot("  bxne r11 ;@ call UnrecognizedCallback if it is defined\n");
+  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
+#if HAVE_ARMv5
+  ot("  tst r0,r0\n");
+  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#else
+  ot("  add lr,pc,#4\n");
+  ot("  tst r0,r0\n");
+  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#endif
   ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
   ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
   ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
@@ -1121,11 +1116,15 @@ static void PrintOpcodes()
   ot("  mov r1,r10,lsr #28\n");
   ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
   ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
-  ot("  ldr r11,[r7,#0x94] ;@ UnrecognizedCallback\n");
-  ot("  tst r11,r11\n");
-  ot("  moveq r0,#0\n");
-  ot("  movne lr,pc\n");
-  ot("  bxne r11 ;@ call UnrecognizedCallback if it is defined\n");
+  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
+#if HAVE_ARMv5
+  ot("  tst r0,r0\n");
+  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#else
+  ot("  add lr,pc,#4\n");
+  ot("  tst r0,r0\n");
+  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#endif
   ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
   ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
   ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
