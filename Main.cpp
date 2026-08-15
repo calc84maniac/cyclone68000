@@ -185,9 +185,16 @@ static void CallUnrecognized()
 
   ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
 #if !HAVE_ARMv5
+ #if USE_FDPIC_ABI
+  ot("  add lr,pc,#8\n");
+ #else
   ot("  add lr,pc,#4\n");
+ #endif
 #endif
   ot("  tst r0,r0\n");
+#if USE_FDPIC_ABI
+  ot("  ldmneia r0,{r0,r9} ;@ load FDPIC descriptor\n");
+#endif
 #if HAVE_ARMv5
   ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
 #else
@@ -213,7 +220,7 @@ static void PrintFramework()
 #if !defined(MEMHANDLERS_DIRECT_PREFIX)
  #if HAVE_ARMv5
   const char *blx = "blx";
- #elif HAVE_ARMv4_ARM9
+ #elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   // this messes with arm_op_count but this is the framework so who cares
   const char *blx = "mov lr,pc\n  bx";
  #endif
@@ -356,6 +363,9 @@ static void PrintFramework()
   ot("  stmfd sp!,{r7,lr} ;@ align stack for calling checkpc()\n");
   ot("  mov r7,r0\n");
   ot("  str r1,[r7,#0x54] ;@ save CycloneJumpTab avoid literal pools\n");
+#if defined(MEMHANDLERS_DIRECT_PREFIX) && USE_FDPIC_ABI
+  ot("  str r9,[r7,#0xa4] ;@ save FDPIC base for direct handler calls\n");
+#endif
   ot("  mov%s r0,#0\n",T2S);
   ot("  str r0,[r7,#0x58] ;@ state_flags\n");
   ot("  str r0,[r7,#0x48] ;@ OSP\n");
@@ -369,9 +379,15 @@ static void PrintFramework()
   ot("  mov%s r0,#4\n",T2S);
   MemHandler(0,2);
 #ifdef MEMHANDLERS_DIRECT_PREFIX
+ #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+ #endif
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
-#elif HAVE_ARMv4_ARM9
+#elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
+ #if USE_FDPIC_ABI
+  ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
   ot("  %s r3 ;@ Call checkpc()\n",blx);
 #else
   ot("  mov lr,pc\n");
@@ -561,9 +577,15 @@ static void PrintFramework()
   ot("  mov%s r1,#0\n",T2S);
   ot("  str r1,[r7,#0x60] ;@ Memory base\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
+  #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+  #endif
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
- #elif HAVE_ARMv4_ARM9
+ #elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
+  #if USE_FDPIC_ABI
+  ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+  #endif
   ot("  %s r3 ;@ Call checkpc()\n",blx);
  #else
   ot("  mov lr,pc\n");
@@ -677,10 +699,17 @@ static void PrintFramework()
 #endif
   ot("  ldr r3,[r7,#0x8c] ;@ IrqCallback\n");
 #if !HAVE_ARMv5
+ #if USE_FDPIC_ABI
+  ot("  add lr,pc,#4*4\n");
+ #else
   ot("  add lr,pc,#4*3\n");
+ #endif
 #endif
   ot("  tst r3,r3\n");
   ot(UAL(str,b,eq) "r3,[r7,#0x47] ;@ just clear IRQ if there is no callback\n");
+#if USE_FDPIC_ABI
+  ot("  ldmneia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+#endif
   ot("  mvneq r0,#0 ;@ and simulate -1 return\n");
 #if HAVE_ARMv5
   ot("  blxne r3\n");
@@ -709,10 +738,16 @@ static void PrintFramework()
   ot("  tst r0,r0 ;@ uninitialized int vector?\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
   ot("  moveq r0,#0x3c\n");
+  #if USE_FDPIC_ABI
+  ot("  ldreq r9,[r7,#0xa4] ;@ load FDPIC base\n");
+  #endif
   ot("  bleq %sread32 ;@ Call read32(r0) handler\n", MEMHANDLERS_DIRECT_PREFIX);
- #elif HAVE_ARMv4_ARM9
+ #elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldreq r3,[r7,#0x70]\n");
   ot("  moveq r0,#0x3c\n");
+  #if USE_FDPIC_ABI
+  ot(UAL(ldm,ia,eq) "r3,{r3,r9} ;@ load FDPIC descriptor\n");
+  #endif
   ot("  %seq r3 ;@ Call read32(r0) handler\n",blx);
  #else
   ot("  moveq r0,#0x3c\n");
@@ -1054,6 +1089,9 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check,int reversed
   char what[32];
 #if !defined(MEMHANDLERS_DIRECT_PREFIX) && !HAVE_ARMv5
   int ofs = MemHandlerAddrInstrs(addrreg,reversed);
+ #if USE_FDPIC_ABI
+  ofs++;
+ #endif
 #endif
 
 #if MEMHANDLERS_NEED_FLAGS
@@ -1066,7 +1104,7 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check,int reversed
 
   sprintf(what, "%s%d", type==0 ? "read" : (type==1 ? "write" : "fetch"), 8<<size);
 
-#if !defined(MEMHANDLERS_DIRECT_PREFIX) && HAVE_ARMv4_ARM9
+#if !defined(MEMHANDLERS_DIRECT_PREFIX) && (HAVE_ARMv4_ARM9 || USE_FDPIC_ABI)
   ot("  ldr r3,[r7,#0x%x] ;@ %s handler\n",func,what); // helps to prevent interlocks
 #endif
 
@@ -1078,6 +1116,9 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check,int reversed
  #endif
     MemHandlerAddrParam(addrreg,reversed);
     ot("  movs r2,r0,lsr #1 ;@ address error?\n");
+ #if !defined(MEMHANDLERS_DIRECT_PREFIX) && USE_FDPIC_ABI
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
     switch (type) {
       case 0: ot("  bcs ExceptionAddressError_r_data\n"); break;
       case 1: ot("  bcs ExceptionAddressError_w_data\n"); break;
@@ -1089,18 +1130,29 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check,int reversed
 
 #ifdef MEMHANDLERS_DIRECT_PREFIX
     MemHandlerAddrParam(addrreg,reversed);
+ #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+ #endif
   ot("  bl %s%s ;@ Call ", MEMHANDLERS_DIRECT_PREFIX, what);
   (void)func; // avoid warning
 #elif HAVE_ARMv5
+  {
     MemHandlerAddrParam(addrreg,reversed);
+ #if USE_FDPIC_ABI
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
+  }
   ot("  blx r3 ;@ Call ");
 #else
   {
     if (ofs) ot("  add lr,pc,#4*%i\n",ofs);
     else     ot("  mov lr,pc\n");
+ #if USE_FDPIC_ABI
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
     MemHandlerAddrParam(addrreg,reversed);
   }
- #if HAVE_ARMv4_ARM9
+ #if HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  bx r3 ;@ Call ");
  #else
   ot("  ldr pc,[r7,#0x%x] ;@ Call ",func);
