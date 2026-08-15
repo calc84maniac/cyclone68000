@@ -134,27 +134,39 @@ int OpBtstReg(int op)
   EaCalcRead((type>0)?8:-1,0,tea,size,0x003f,earwt_msb_dont_care);
 
   if (tea>=0x10)
-       ot("  and r11,r11,#7  ;@ mem - do mod 8\n");  // size always 0
+       ot("  and r2,r11,#7  ;@ mem - do mod 8\n");  // size always 0
   else {
-       ot("  and r11,r11,#31 ;@ reg - do mod 32\n"); // size always 2
+       ot("  and r2,r11,#31 ;@ reg - do mod 32\n"); // size always 2
        if (type) {
-         ot("  tst r11,#0x10   ;@ extra cycles\n");
-         ot("  subne r5,r5,#2\n");
+         ot("  mov%s r1,r2,lsr #4 ;@ extra cycles\n",T2S);
+         ot("  sub r5,r5,r1,lsl #1\n");
        }
   }
   ot("\n");
 
-  ot("  mov r1,#1\n");
-  ot("  tst r0,r1,lsl r11 ;@ Do arithmetic\n");
+  ot("  mov%s r1,#1\n",T2S);
+#if USE_THUMB2
+  ot("  movs r1,r1,lsl r2\n");
+  if (type!=2) ot("  tst r1,r0 ;@ Do arithmetic\n");
+  else         ot("  ands r1,r1,r0 ;@ Do arithmetic\n");
+#else
+  ot("  tst r0,r1,lsl r2 ;@ Do arithmetic\n");
+#endif
   ot("  bicne r10,r10,#0x40000000\n");
   ot("  orreq r10,r10,#0x40000000 ;@ Get Z flag\n");
   ot("\n");
 
   if (type>0)
   {
-    if (type==1) ot("  eor r1,r0,r1,lsl r11 ;@ Toggle bit\n");
-    if (type==2) ot("  bic r1,r0,r1,lsl r11 ;@ Clear bit\n");
-    if (type==3) ot("  orr r1,r0,r1,lsl r11 ;@ Set bit\n");
+#if USE_THUMB2
+    if (type==1) ot("  eors r1,r1,r0 ;@ Toggle bit\n");
+    if (type==2) ot("  subs r1,r0,r1 ;@ Clear bit\n");
+    if (type==3) ot("  orrs r1,r1,r0 ;@ Set bit\n");
+#else
+    if (type==1) ot("  eor r1,r0,r1,lsl r2 ;@ Toggle bit\n");
+    if (type==2) ot("  bic r1,r0,r1,lsl r2 ;@ Clear bit\n");
+    if (type==3) ot("  orr r1,r0,r1,lsl r2 ;@ Set bit\n");
+#endif
     ot("\n");
     EaWrite(8,1,tea,size,0x003f,earwt_msb_dont_care);
   }
@@ -267,11 +279,13 @@ int OpNeg(int op)
   if (type==0)
   {
     ot(";@ Negx:\n");
-    GetXBit(1);
-    if(size!=2) ot("  mov r0,r0,asl #%i\n",size?16:24);
-    ot("  rscs r1,r0,#0 ;@ do arithmetic\n");
+    ot("  ldr r2,[r7,#0x4c] ;@ X bit\n");
+    if(size!=2) ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
+    ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
+    ot("  sbcs r1,r0,#0 ;@ do arithmetic\n");
+    ot("  mvns r1,r1\n");
     ot("  orr r3,r10,#0xb0000000 ;@ for old Z\n");
-    OpGetFlags(1,1,0);
+    OpGetFlags(0,1,0);
     if(size!=2) {
       ot("  movs r1,r1,asr #%i\n",size?16:24);
       ot("  orreq r10,r10,#0x40000000 ;@ possily missed Z\n");
@@ -466,16 +480,26 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
   if (usereg)
   {
     ot(";@ Use Dn for count:\n");
+#if USE_THUMB2
+    ot("  ubfx r2,r8,#9,#3\n");
+    ot("  ldr r2,[r7,r2,lsl #2]\n");
+#else
     ot("  and r2,r8,#0x0e00\n");
     ot("  ldr r2,[r7,r2,lsr #7]\n");
+#endif
     ot("  and r2,r2,#63\n");
     ot("\n");
     strcpy(pct,"r2");
   }
   else if (count<0)
   {
+#if HAVE_ARMv6T2
+    ot("  ubfx r2,r8,#9,#3 ;@ Get 'n'\n");
+#else
     ot("  mov r2,r8,lsr #9 ;@ Get 'n'\n");
-    ot("  and r2,r2,#7\n\n"); strcpy(pct,"r2");
+    ot("  and r2,r2,#7\n\n");
+#endif
+    strcpy(pct,"r2");
   }
 
   // Take 2*n cycles:
@@ -521,6 +545,13 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
 
     if (type==0 && dir) {
       ot(";@ calculate V flag (set if sign bit changes at anytime):\n");
+#if USE_THUMB2
+      if (pct[0]=='r') {
+        ot("  mov r2,r0,asr %s\n", pct);
+        ot("  cmp r3,r2\n");
+      }
+      else
+#endif
       ot("  cmp r3,r0,asr %s\n", pct);
       ot("  orrne r10,r10,#0x10000000\n");
       ot("\n");
@@ -536,11 +567,12 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
     if(count == 1)
     {
       if(dir==0) {
+        ot("  ldr r2,[r7,#0x4c] ;@ X bit\n");
         if(size!=2) {
           ot("  orr r0,r0,r0,lsr #%i\n", size?16:24);
           ot("  bic r0,r0,#0x%x\n", 1<<(32-wide));
         }
-        GetXBit(0);
+        ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
         ot("  movs r0,r0,rrx\n");
         OpGetFlags(0,1);
       } else {
@@ -551,7 +583,7 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
         ot("  orrne r0,r0,#0x%x\n", 1<<(32-wide));
         ot("  bicne r10,r10,#0x40000000 ;@ clear Z in case it got there\n");
       }
-      ot("  bic r10,r10,#0x10000000 ;@ make suve V is clear\n");
+      ot("  bic r10,r10,#0x10000000 ;@ make sure V is clear\n");
       return 0;
     }
 
@@ -587,17 +619,25 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
     if (shift) ot("  mov r0,r0,lsr #%d ;@ Shift down\n",shift);
 
     ot("\n");
-    ot(";@ First get X bit (middle):\n");
+    ot(";@ First get X bit (bottom):\n");
     ot("  ldr r3,[r7,#0x4c]\n");
-    ot("  rsb r1,r2,#%d\n",wide);
+    ot("  rsbs r1,r2,#%d ;@ should also clear ARM V\n",wide);
+#if HAVE_ARMv6T2
+    ot("  ubfx r3,r3,#29,#1\n");
+#else
     ot("  and r3,r3,#0x20000000\n");
     ot("  mov r3,r3,lsr #29\n");
-    ot("  mov r3,r3,lsl r1\n");
+#endif
 
     ot(";@ Rotate bits:\n");
-    ot("  orr r3,r3,r0,lsr r2 ;@ Orr right part\n");
-    ot("  rsbs r2,r2,#%d ;@ should also clear ARM V\n",wide+1);
-    ot("  orrs r0,r3,r0,lsl r2 ;@ Orr left part, set flags\n");
+    ot("  orrs r3,r3,r0,lsl #1 ;@ Orr left part above X bit, set carry flag\n");
+    ot("  mov r0,r0,lsr r2 ;@ Shift right part, preserve carry flag\n");
+#if USE_THUMB2
+    ot("  movs r3,r3,lsl r1 ;@ Shift left part and X bit, set carry flag if r1!=0\n");
+    ot("  orrs r0,r0,r3 ;@ Orr left part, set NZ flags\n");
+#else
+    ot("  orrs r0,r0,r3,lsl r1 ;@ Orr left part, set flags\n");
+#endif
     ot("\n");
 
     if (shift) ot("  movs r0,r0,lsl #%d ;@ Shift up and get correct NC flags\n",shift);

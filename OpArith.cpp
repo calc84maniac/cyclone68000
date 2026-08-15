@@ -229,11 +229,17 @@ static void UnrolledDiv()
   ot("  clz r3,r3 ;@ leading zeros of dividend, clamped to clz(divisor)+16\n");
   ot("  clz r1,r1 ;@ leading zeros of divisor\n");
   ot("  sbcs r3,r3,r1 ;@ subtract and round down (carry is still clear)\n");
-  ot("  mov r3,r3,lsl #1 ;@ each skipped iteration has 2 penalty cycle pairs\n");
+  ot("  movhi r3,r3,lsl #1 ;@ each skipped iteration has 2 penalty cycle pairs\n");
+ #if USE_THUMB2
+  ot(";@ add branch offset (16 bytes per iteration)\n");
+  ot("  movhi r1,r3,lsl #3\n");
+  ot("  addhi pc,pc,r1 ;@ fallthrough if max iterations\n");
+ #else
   ot(";@ add branch offset (12 bytes per iteration)\n");
-  ot("  add r1,r3,r3,lsl #1\n");
+  ot("  addhi r1,r3,r3,lsl #1\n");
   ot("  addhi pc,pc,r1,lsl #1 ;@ fallthrough if max iterations\n");
-  ot("  mov r3,#0 ;@ saturate negative cycles to 0\n");
+ #endif
+  ot("  mov%s%s r3,#0 ;@ saturate negative cycles to 0\n",T2S,T2N);
 #else
   ot("  mov r3,#0 ;@ number of additional cycle pairs\n");
   // Resolve only to an even number of skipped iterations, because
@@ -258,10 +264,10 @@ static void UnrolledDiv()
   ot(";@ Finally, add 0, 1, or 2 penalty cycle pairs based on the overflow and carry flags.\n");
   for (int shift=0; shift<16; shift++)
   {
-    ot("  cmp r10,r2,lsl #%d\n",shift);
-    ot("  addcc r2,r2,r0,lsr #%d+1\n",shift);
+    ot("  cmp%s r10,r2,lsl #%d\n",T2W,shift);
+    ot("  addcc%s r2,r2,r0,lsr #%d+1\n",T2W,shift);
     // Final iteration has a fixed cycle length
-    if (shift!=15) ot("  adcvc r3,r3,#1\n");
+    if (shift!=15) ot("  adcvc%s r3,r3,#1\n",T2W);
   }
   ot("\n");
   ot("  sub r5,r5,r3,lsl #1 ;@ Count penalty cycle pairs\n");
@@ -398,12 +404,12 @@ int OpMul(int op)
     ot("  sub r5,r5,r0,lsr #23 ;@ cycles -= 2*bitcount(mask)\n");
 
     ot(";@ Get 16-bit signs right:\n");
-    ot("  mov r0,r1,%s #16\n",sign?"asr":"lsr");
+    ot("  mov%s r1,r1,%s #16\n",T2S,sign?"asr":"lsr");
     if (sign) SignExtend(2,2,1);
     else      ZeroExtend(2,2,1);
     ot("\n");
 
-    ot("  muls r1,r2,r0\n");
+    ot("  muls r1,r2,r1\n");
     OpGetFlagsNZ(1);
   }
   ot("\n");
@@ -433,7 +439,7 @@ int GetXBit(int subtract)
   ot(";@ Get X bit:\n");
   ot("  ldr r2,[r7,#0x4c]\n");
   if (subtract) ot("  mvn r2,r2 ;@ Invert it\n");
-  ot("  tst r2,r2,lsl #3 ;@ Get into Carry\n");
+  ot("  movs r2,r2,lsl #3 ;@ Get into Carry\n");
   ot("\n");
   return 0;
 }
@@ -693,21 +699,27 @@ int OpAddx(int op)
   if (size<2) asl=(char *)(size?",asl #16":",asl #24");
 
   ot(";@ Do arithmetic:\n");
-  GetXBit(type==0);
+  ot("  ldr r2,[r7,#0x4c] ;@ X bit\n");
 
   if (type==1 && size<2)
   {
     ot(";@ Make sure the carry bit will tip the balance:\n");
-    ot("  mvn r2,#0\n");
-    ot("  orr r6,r6,r2,lsr #%i\n",(size==0)?8:16);
+    ot("  mvn r3,#0\n");
+    ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
+    ot("  orrcs r6,r6,r3,lsr #%i\n",(size==0)?8:16);
     ot("\n");
   }
+  else
+    ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
 
-  if (type==0) ot("  rscs r1,r6,r0%s\n",asl);
+  if (type==0) {
+      ot("  sbcs r1,r6,r0%s\n",asl);
+      ot("  mvns r1,r1\n");
+  }
   if (type==1) ot("  adcs r1,r6,r0%s\n",asl);
   ot("  orr r3,r10,#0xb0000000 ;@ for old Z\n");
-  OpGetFlags(type==0,1,0); // subtract
-  if (size<2) {
+  OpGetFlags(0,1,0); // subtract
+  if (type==0 && size<2) {
     ot("  movs r2,r1,lsr #%i\n", size?16:24);
     ot("  orreq r10,r10,#0x40000000 ;@ add potentially missed Z\n");
   }

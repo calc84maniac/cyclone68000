@@ -155,6 +155,7 @@ void FlushPC(int force)
     ot("  str r4,[r7,#0x40] ;@ Save PC\n");
 }
 
+#if USE_UNRECOGNIZED_CALLBACK || USE_AFLINE_CALLBACK
 static void CallUnrecognized()
 {
   ot("  str r4,[r7,#0x40] ;@ Save PC\n");
@@ -185,6 +186,7 @@ static void CallUnrecognized()
   ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
   ot("  mov r10,r10,lsl #28\n");
 }
+#endif
 
 static void PrintFramework()
 {
@@ -285,8 +287,8 @@ static void PrintFramework()
   ot("unc_loop%s\n", ms?"":":");
   ot("  ldrh r1,[r0],#2\n");
   ot("  and r2,r1,#0xf\n");
-  ot("  bic r1,r1,#0xf\n");
-  ot("  ldr r1,[r3,r1,lsr #2] ;@ r1=handler\n");
+  ot("  mov%s r1,r1,lsr #4\n",T2S);
+  ot("  ldr r1,[r3,r1,lsl #2] ;@ r1=handler\n");
   ot("  cmp r2,#0xf\n");
   ot("  addeq r2,r2,#1 ;@ 0xf is really 0x10\n");
   ot("  tst r2,r2\n");
@@ -1121,6 +1123,9 @@ static void PrintOpcodes()
   ot(";@ ---------------------------- Opcodes ---------------------------\n");
 
   // Emit null opcode:
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op____%s ;@ Called if an opcode is not recognised\n", ms?"":":");
 #if EMULATE_ADDRESS_ERRORS_JUMP || EMULATE_ADDRESS_ERRORS_IO
   ot("  ldr r1,[r7,#0x58]\n");
@@ -1146,6 +1151,9 @@ static void PrintOpcodes()
   OpEnd();
 
   // Unrecognised a-line and f-line opcodes throw an exception:
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op__al%s ;@ Unrecognised a-line opcode\n", ms?"":":");
   ot("  sub r4,r4,#2\n");
 #if USE_AFLINE_CALLBACK
@@ -1163,6 +1171,9 @@ static void PrintOpcodes()
   ot("\n");
   OpEnd();
 
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op__fl%s ;@ Unrecognised f-line opcode\n", ms?"":":");
   ot("  sub r4,r4,#2\n");
 #if USE_AFLINE_CALLBACK
@@ -1216,7 +1227,7 @@ static void PrintJumpTable()
   ot(";@ -------------------------- Jump Table --------------------------\n");
 
   // space for decompressed table
-  ot(ms?"  area |.data|, data\n":"  .data\n  .align 4\n\n");
+  ot(ms?"  area |.data|, data\n":"  .data\n  .balign 4\n\n");
 
 #if COMPRESS_JUMPTABLE
     int handlers=0,reps=0,*indexes,ip,u,out;
@@ -1367,7 +1378,11 @@ static int CycloneMake()
 #if USE_UAL_SYNTAX && !USE_MS_SYNTAX
   ot("  .syntax unified\n");
 #endif
-  ot(ms?"  area |.text|, code\n":"  .text\n  .balign 4\n\n");
+  ot(ms?"  area |.text|, code\n":"  .text\n  .balign 4\n");
+#if USE_THUMB2
+  ot("  %sthumb\n",ms?"":".");
+#endif
+  ot("\n");
   DeclareGlobalFunc("CycloneInitJT");
   DeclareGlobalFunc("CycloneResetJT");
   DeclareGlobalFunc("CycloneRun");

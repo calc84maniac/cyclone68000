@@ -537,11 +537,21 @@ int OpMoveq(int op)
 
   OpStart(op); Cycles=4;
 
+#if USE_THUMB2
+  ot("  sxtb r0,r8 ;@ Sign extended Quick value\n");
+  ot("  ubfx r1,r8,#9,#3\n");
+  ot("  tst r0,r0\n");
+#else
   ot("  movs r0,r8,asl #24\n");
   ot("  and r1,r8,#0x0e00\n");
   ot("  mov r0,r0,asr #24 ;@ Sign extended Quick value\n");
+#endif
   OpGetFlagsNZ(0);
+#if USE_THUMB2
+  ot("  str r0,[r7,r1,lsl #2] ;@ Store into Dn\n");
+#else
   ot("  str r0,[r7,r1,lsr #7] ;@ Store into Dn\n");
+#endif
   ot("\n");
 
   OpEnd();
@@ -567,6 +577,17 @@ int OpExg(int op)
 
   OpStart(op); Cycles=6;
 
+#if USE_THUMB2
+  ot("  ubfx r2,r8,#9,#3 ;@ Find T register\n");
+  ot("  ubfx r3,r8,#0,#4 ;@ Find S register\n");
+  if (type==0x48) ot("  adds r2,r2,#8 ;@ T is an address register\n");
+  ot("\n");
+  ot("  ldr r0,[r7,r2,lsl #2] ;@ Get T\n");
+  ot("  ldr r1,[r7,r3,lsl #2] ;@ Get S\n");
+  ot("\n");
+  ot("  str r0,[r7,r3,lsl #2] ;@ T->S\n");
+  ot("  str r1,[r7,r2,lsl #2] ;@ S->T\n");
+#else
   ot("  and r2,r8,#0x0e00 ;@ Find T register\n");
   ot("  and r3,r8,#0x000f ;@ Find S register\n");
   if (type==0x48) ot("  orr r2,r2,#0x1000 ;@ T is an address register\n");
@@ -575,7 +596,8 @@ int OpExg(int op)
   ot("  ldr r1,[r7,r3,lsl #2] ;@ Get S\n");
   ot("\n");
   ot("  str r0,[r7,r3,lsl #2] ;@ T->S\n");
-  ot("  str r1,[r7,r2,lsr #7] ;@ S->T\n");  
+  ot("  str r1,[r7,r2,lsr #7] ;@ S->T\n");
+#endif
   ot("\n");
 
   OpEnd();

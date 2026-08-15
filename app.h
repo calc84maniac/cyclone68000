@@ -21,6 +21,22 @@
 #include CONFIG_FILE
 
 // Enforce ARM architecture hierarchy even if a custom config file doesn't
+#ifndef USE_THUMB2
+#define USE_THUMB2 0
+#elif USE_THUMB2
+#undef HAVE_ARMv6T2
+#define HAVE_ARMv6T2 1
+#undef USE_UAL_SYNTAX
+#define USE_UAL_SYNTAX 1
+#endif
+
+#ifndef HAVE_ARMv6T2
+#define HAVE_ARMv6T2 0
+#elif HAVE_ARMv6T2
+#undef HAVE_ARMv6
+#define HAVE_ARMv6 1
+#endif
+
 #ifndef HAVE_ARMv6
 #define HAVE_ARMv6 0
 #elif HAVE_ARMv6
@@ -47,6 +63,17 @@
 #define UAL(inst,suffix,cond) "  " #inst #suffix #cond " "
 #else
 #define UAL(inst,suffix,cond) "  " #inst #cond #suffix " "
+#endif
+
+// convenience macros for setting flags or using width suffixes on Thumb-2
+#if USE_THUMB2
+#define T2S "s"
+#define T2N ".n"
+#define T2W ".w"
+#else
+#define T2S ""
+#define T2N ""
+#define T2W ""
 #endif
 
 // Disa.c

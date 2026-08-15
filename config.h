@@ -13,6 +13,9 @@
  * Note: The highest enabled architecture version implicitly enables
  * all lower versions.
  */
+#ifndef HAVE_ARMv6T2
+#define HAVE_ARMv6T2                0
+#endif
 #ifndef HAVE_ARMv6
 #define HAVE_ARMv6                  0
 #endif
@@ -32,6 +35,16 @@
  */
 #ifndef HAVE_ARMv4_ARM9
 #define HAVE_ARMv4_ARM9             0
+#endif
+
+/*
+ * Enable this option to generate Thumb-2 compatible assembly.
+ * This option implicitly enables all architectures ARMv6T2 and below,
+ * as well as UAL syntax.
+ * Note: When using GNU as, the -mimplicit-it=always flag must be used.
+ */
+#ifndef USE_THUMB2
+#define USE_THUMB2                  0
 #endif
 
 /*
