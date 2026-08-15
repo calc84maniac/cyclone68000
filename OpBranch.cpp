@@ -27,19 +27,29 @@ void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
 #if USE_CHECKPC_CALLBACK
   ot(";@ Check Memory Base+pc\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
+  #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+  #endif
   ot("  add r0,r%d,r%d%s ;@ r0 = New PC\n",r_base,r_ofs,s_ofs);
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
  #else
-  #if HAVE_ARMv4_ARM9
+  #if HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
   #endif
   #if !HAVE_ARMv5
+   #if USE_FDPIC_ABI
+  ot("  add lr,pc,#8\n");
+   #else
   ot("  add lr,pc,#4\n");
+   #endif
   #endif
   ot("  add r0,r%d,r%d%s ;@ r0 = New PC\n",r_base,r_ofs,s_ofs);
+  #if USE_FDPIC_ABI
+  ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+  #endif  
   #if HAVE_ARMv5
   ot("  blx r3 ;@ Call checkpc()\n");
-  #elif HAVE_ARMv4_ARM9
+  #elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  bx r3 ;@ Call checkpc()\n");
   #else
   ot("  ldr pc,[r7,#0x64] ;@ Call checkpc()\n");

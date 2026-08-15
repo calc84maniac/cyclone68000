@@ -53,7 +53,8 @@ struct Cyclone
   void *internal_CycloneEnd;                // [r7,#0x98] internal, do not modify
   int   internal_s_cycles;                  // [r7,#0x9c] internal, do not modify
   void *internal_s_CycloneEnd;              // [r7,#0xa0] internal, do not modify
-  unsigned int internal[3];                 // [r7,#0xa4] reserved for internal use, do not change.
+  void *internal_fdpic_base;                // [r7,#0xa4] internal, do not modify
+  unsigned int internal[2];                 // [r7,#0xa8] reserved for internal use, do not change.
 };
 
 // Initialize. Used only if Cyclone was compiled with compressed jumptable, see config.h

@@ -35,6 +35,11 @@
 #endif
 
 /*
+ * Enable this option if memory handlers use the FDPIC ABI for MMU-less systems.
+ */
+#define USE_FDPIC_ABI               0
+
+/*
  * If this option is enabled, Microsoft ARMASM compatible output is generated
  * (output file -  Cyclone.asm). Otherwise GNU as syntax is used (Cyclone.s).
  */

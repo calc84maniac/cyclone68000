@@ -687,12 +687,20 @@ int OpStopReset(int op)
     ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
     ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
     ot("  ldr r0,[r7,#0x90] ;@ ResetCallback\n");
- #if HAVE_ARMv5
+ #if !HAVE_ARMv5
+  #if USE_FDPIC_ABI
+    ot("  add lr,pc,#8\n");
+  #else
+    ot("  add lr,pc,#4\n");
+  #endif
+ #endif
     ot("  tst r0,r0\n");
+ #if USE_FDPIC_ABI
+    ot("  ldmneia r0,{r0,r9} ;@ load FDPIC descriptor\n");
+ #endif
+ #if HAVE_ARMv5
     ot("  blxne r0 ;@ call ResetCallback if it is defined\n");
  #else
-    ot("  add lr,pc,#4\n");
-    ot("  tst r0,r0\n");
     ot("  bxne r0 ;@ call ResetCallback if it is defined\n");
  #endif
     ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");

@@ -155,6 +155,37 @@ void FlushPC(int force)
     ot("  str r4,[r7,#0x40] ;@ Save PC\n");
 }
 
+static void CallUnrecognized()
+{
+  ot("  str r4,[r7,#0x40] ;@ Save PC\n");
+  ot("  mov r1,r10,lsr #28\n");
+  ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
+  ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
+
+  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
+#if !HAVE_ARMv5
+ #if USE_FDPIC_ABI
+  ot("  add lr,pc,#8\n");
+ #else
+  ot("  add lr,pc,#4\n");
+ #endif
+#endif
+  ot("  tst r0,r0\n");
+#if USE_FDPIC_ABI
+  ot("  ldmneia r0,{r0,r9} ;@ load FDPIC descriptor\n");
+#endif
+#if HAVE_ARMv5
+  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#else
+  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
+#endif
+
+  ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
+  ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
+  ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
+  ot("  mov r10,r10,lsl #28\n");
+}
+
 static void PrintFramework()
 {
   int state_flags_to_check = 1; // stopped
@@ -166,7 +197,7 @@ static void PrintFramework()
 #endif
 #if HAVE_ARMv5
   const char *blx = "blx";
-#elif HAVE_ARMv4_ARM9
+#elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   // this messes with arm_op_count but this is the framework so who cares
   const char *blx = "mov lr,pc\n  bx";
 #endif
@@ -304,6 +335,9 @@ static void PrintFramework()
   ot("  stmfd sp!,{r7,lr}\n");
   ot("  mov r7,r0\n");
   ot("  str r1,[r7,#0x54] ;@ save CycloneJumpTab avoid literal pools\n");
+#if defined(MEMHANDLERS_DIRECT_PREFIX) && USE_FDPIC_ABI
+  ot("  str r9,[r7,#0xa4] ;@ save FDPIC base for direct handler calls\n");
+#endif
   ot("  mov r0,#0\n");
   ot("  str r0,[r7,#0x58] ;@ state_flags\n");
   ot("  str r0,[r7,#0x48] ;@ OSP\n");
@@ -317,9 +351,15 @@ static void PrintFramework()
   ot("  mov r0,#4\n");
   MemHandler(0,2);
 #ifdef MEMHANDLERS_DIRECT_PREFIX
+ #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+ #endif
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
-#elif HAVE_ARMv4_ARM9
+#elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
+ #if USE_FDPIC_ABI
+  ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
   ot("  %s r3 ;@ Call checkpc()\n",blx);
 #else
   ot("  mov lr,pc\n");
@@ -505,9 +545,15 @@ static void PrintFramework()
   ot("  mov r1,#0\n");
   ot("  str r1,[r7,#0x60] ;@ Memory base\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
+  #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+  #endif
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
- #elif HAVE_ARMv4_ARM9
+ #elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
+  #if USE_FDPIC_ABI
+  ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+  #endif
   ot("  %s r3 ;@ Call checkpc()\n",blx);
  #else
   ot("  mov lr,pc\n");
@@ -619,10 +665,17 @@ static void PrintFramework()
 #endif
   ot("  ldr r3,[r7,#0x8c] ;@ IrqCallback\n");
 #if !HAVE_ARMv5
+ #if USE_FDPIC_ABI
+  ot("  add lr,pc,#4*4\n");
+ #else
   ot("  add lr,pc,#4*3\n");
+ #endif
 #endif
   ot("  tst r3,r3\n");
   ot("  streqb r3,[r7,#0x47] ;@ just clear IRQ if there is no callback\n");
+#if USE_FDPIC_ABI
+  ot("  ldmneia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+#endif
   ot("  mvneq r0,#0 ;@ and simulate -1 return\n");
 #if HAVE_ARMv5
   ot("  blxne r3\n");
@@ -651,10 +704,16 @@ static void PrintFramework()
   ot("  tst r0,r0 ;@ uninitialized int vector?\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
   ot("  moveq r0,#0x3c\n");
+  #if USE_FDPIC_ABI
+  ot("  ldreq r9,[r7,#0xa4] ;@ load FDPIC base\n");
+  #endif
   ot("  bleq %sread32 ;@ Call read32(r0) handler\n", MEMHANDLERS_DIRECT_PREFIX);
- #elif HAVE_ARMv4_ARM9
+ #elif HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  ldreq r3,[r7,#0x70]\n");
   ot("  moveq r0,#0x3c\n");
+  #if USE_FDPIC_ABI
+  ot("  ldmeqia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+  #endif
   ot("  %seq r3 ;@ Call read32(r0) handler\n",blx);
  #else
   ot("  moveq r0,#0x3c\n");
@@ -962,7 +1021,7 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
 
   sprintf(what, "%s%d", type==0 ? "read" : (type==1 ? "write" : "fetch"), 8<<size);
 
-#if !defined(MEMHANDLERS_DIRECT_PREFIX) && HAVE_ARMv4_ARM9
+#if !defined(MEMHANDLERS_DIRECT_PREFIX) && (HAVE_ARMv4_ARM9 || USE_FDPIC_ABI)
   ot("  ldr r3,[r7,#0x%x] ;@ %s handler\n",func,what); // helps to prevent interlocks
 #endif
 
@@ -970,10 +1029,17 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
   if (size > 0 && need_addrerr_check)
   {
  #if !defined(MEMHANDLERS_DIRECT_PREFIX) && !HAVE_ARMv5
-    ot("  add lr,pc,#4*%i\n", addrreg==0?2:3); // helps to prevent interlocks
+    int ofs = addrreg==0?2:3;
+  #if USE_FDPIC_ABI
+    ofs++;
+  #endif
+    ot("  add lr,pc,#4*%i\n",ofs); // helps to prevent interlocks
  #endif
     if (addrreg != 0) ot("  mov r0,r%i\n", addrreg);
     ot("  tst r0,#1 ;@ address error?\n");
+ #if !defined(MEMHANDLERS_DIRECT_PREFIX) && USE_FDPIC_ABI
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
     switch (type) {
       case 0: ot("  bne ExceptionAddressError_r_data\n"); break;
       case 1: ot("  bne ExceptionAddressError_w_data\n"); break;
@@ -985,22 +1051,42 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
 
 #ifdef MEMHANDLERS_DIRECT_PREFIX
   if (addrreg != 0)
-    ot("  mov r0,r%i\n", addrreg);
+    ot("  mov r0,r%i\n", addrreg);    
+ #if USE_FDPIC_ABI
+  ot("  ldr r9,[r7,#0xa4] ;@ load FDPIC base\n");
+ #endif
   ot("  bl %s%s ;@ Call ", MEMHANDLERS_DIRECT_PREFIX, what);
   (void)func; // avoid warning
 #elif HAVE_ARMv5
-  if (addrreg != 0)
-    ot("  mov r0,r%i\n", addrreg);
+  {
+    if (addrreg != 0)
+      ot("  mov r0,r%i\n", addrreg);
+ #if USE_FDPIC_ABI
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #endif
+  }
   ot("  blx r3 ;@ Call ");
 #else
   if (addrreg != 0)
   {
+ #if USE_FDPIC_ABI
+    ot("  add lr,pc,#8\n");
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #else
     ot("  add lr,pc,#4\n");
+ #endif
     ot("  mov r0,r%i\n", addrreg);
   }
   else
+  {
+ #if USE_FDPIC_ABI
+    ot("  add lr,pc,#4\n");
+    ot("  ldmia r3,{r3,r9} ;@ load FDPIC descriptor\n");
+ #else
     ot("  mov lr,pc\n");
- #if HAVE_ARMv4_ARM9
+ #endif
+  }
+ #if HAVE_ARMv4_ARM9 || USE_FDPIC_ABI
   ot("  bx r3 ;@ Call ");
  #else
   ot("  ldr pc,[r7,#0x%x] ;@ Call ",func);
@@ -1045,23 +1131,7 @@ static void PrintOpcodes()
   ot("  sub r4,r4,#2\n");
 #endif
 #if USE_UNRECOGNIZED_CALLBACK
-  ot("  str r4,[r7,#0x40] ;@ Save PC\n");
-  ot("  mov r1,r10,lsr #28\n");
-  ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
-  ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
-  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
-#if HAVE_ARMv5
-  ot("  tst r0,r0\n");
-  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
-#else
-  ot("  add lr,pc,#4\n");
-  ot("  tst r0,r0\n");
-  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
-#endif
-  ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
-  ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
-  ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
-  ot("  mov r10,r10,lsl #28\n");
+  CallUnrecognized();
   ot("  tst r0,r0\n");
   ot("  subeq r5,r5,#34\n");
   ot("  moveq r0,#4\n");
@@ -1079,23 +1149,7 @@ static void PrintOpcodes()
   ot("Op__al%s ;@ Unrecognised a-line opcode\n", ms?"":":");
   ot("  sub r4,r4,#2\n");
 #if USE_AFLINE_CALLBACK
-  ot("  str r4,[r7,#0x40] ;@ Save PC\n");
-  ot("  mov r1,r10,lsr #28\n");
-  ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
-  ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
-  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
-#if HAVE_ARMv5
-  ot("  tst r0,r0\n");
-  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
-#else
-  ot("  add lr,pc,#4\n");
-  ot("  tst r0,r0\n");
-  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
-#endif
-  ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
-  ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
-  ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
-  ot("  mov r10,r10,lsl #28\n");
+  CallUnrecognized();
   ot("  tst r0,r0\n");
   ot("  subeq r5,r5,#34\n");
   ot("  moveq r0,#0x0a\n");
@@ -1112,23 +1166,7 @@ static void PrintOpcodes()
   ot("Op__fl%s ;@ Unrecognised f-line opcode\n", ms?"":":");
   ot("  sub r4,r4,#2\n");
 #if USE_AFLINE_CALLBACK
-  ot("  str r4,[r7,#0x40] ;@ Save PC\n");
-  ot("  mov r1,r10,lsr #28\n");
-  ot("  strb r1,[r7,#0x46] ;@ Save Flags (NZCV)\n");
-  ot("  str r5,[r7,#0x5c] ;@ Save Cycles\n");
-  ot("  ldr r0,[r7,#0x94] ;@ UnrecognizedCallback\n");
-#if HAVE_ARMv5
-  ot("  tst r0,r0\n");
-  ot("  blxne r0 ;@ call UnrecognizedCallback if it is defined\n");
-#else
-  ot("  add lr,pc,#4\n");
-  ot("  tst r0,r0\n");
-  ot("  bxne r0 ;@ call UnrecognizedCallback if it is defined\n");
-#endif
-  ot("  ldrb r10,[r7,#0x46] ;@ r10 = Load Flags (NZCV)\n");
-  ot("  ldr r5,[r7,#0x5c] ;@ Load Cycles\n");
-  ot("  ldr r4,[r7,#0x40] ;@ Load PC\n");
-  ot("  mov r10,r10,lsl #28\n");
+  CallUnrecognized();
   ot("  tst r0,r0\n");
   ot("  subeq r5,r5,#34\n");
   ot("  moveq r0,#0x0b\n");
