@@ -290,7 +290,7 @@ static void PrintFramework()
   ot("  cmp r2,#0xf\n");
   ot("  addeq r2,r2,#1 ;@ 0xf is really 0x10\n");
   ot("  tst r2,r2\n");
-  ot("  ldreqh r2,[r0],#2 ;@ counter is in next word\n");
+  ot(UAL(ldr,h,eq) "r2,[r0],#2 ;@ counter is in next word\n");
   ot("  tst r2,r2\n");
   ot("  beq unc_finish ;@ done decompressing\n");
   ot("  tst r1,r1\n");
@@ -1364,7 +1364,10 @@ static int CycloneMake()
   for(i=0xa000; i<0xb000;  i++) CyJump[i] = -2; // a-line emulation
   for(i=0xf000; i<0x10000; i++) CyJump[i] = -3; // f-line emulation
 
-  ot(ms?"  area |.text|, code\n":"  .text\n  .align 4\n\n");
+#if USE_UAL_SYNTAX && !USE_MS_SYNTAX
+  ot("  .syntax unified\n");
+#endif
+  ot(ms?"  area |.text|, code\n":"  .text\n  .balign 4\n\n");
   DeclareGlobalFunc("CycloneInitJT");
   DeclareGlobalFunc("CycloneResetJT");
   DeclareGlobalFunc("CycloneRun");
