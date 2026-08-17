@@ -41,16 +41,16 @@ int OpArith(int op)
   EaCalcRead((type!=6)?11:-1,0,tea,size,0x003f,earwt_msb_dont_care);
 
   if (size<2) shiftstr=(char *)(size?",asl #16":",asl #24");
-  if (size<2) ot("  mov r10,r10,asl #%i\n",size?16:24);
+  if (size<2) ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
 
   ot(";@ Do arithmetic:\n");
 
-  if (type==0) ot("  orrs r1,r10,r0%s\n",shiftstr);
-  if (type==1) ot("  ands r1,r10,r0%s\n",shiftstr);
+  if (type==0) ot("  orrs r1,r0,r10%s\n",shiftstr);
+  if (type==1) ot("  ands r1,r0,r10%s\n",shiftstr);
   if (type==2||type==6)
-               ot("  rsbs r1,r10,r0%s ;@ Defines NZCV\n",shiftstr);
-  if (type==3) ot("  adds r1,r10,r0%s ;@ Defines NZCV\n",shiftstr);
-  if (type==5) ot("  eors r1,r10,r0%s\n",shiftstr);
+               ot("  subs r1,r0,r10%s ;@ Defines NZCV\n",shiftstr);
+  if (type==3) ot("  adds r1,r0,r10%s ;@ Defines NZCV\n",shiftstr);
+  if (type==5) ot("  eors r1,r0,r10%s\n",shiftstr);
 
   if (type< 2) OpGetFlagsNZ(1); // Ori/And
   if (type==2) OpGetFlags(1,1); // Sub: Subtract/X-bit
@@ -130,7 +130,7 @@ int OpAddq(int op)
     sprintf(count,"#0x%.4x",8<<shift);
   }
 
-  if (size<2)  ot("  mov r0,r0,asl #%d\n\n",size?16:24);
+  if (size<2)  ot("  mov%s r0,r0,asl #%d\n\n",T2S,size?16:24);
 
   if (type==0) ot("  adds r1,r0,%s\n",count);
   if (type==1) ot("  subs r1,r0,%s\n",count);
@@ -186,7 +186,7 @@ int OpArithReg(int op)
   if (size==0) asl=",asl #24";
   if (size==1) asl=",asl #16";
 
-  if (size<2) ot("  mov r0,r0%s\n",asl);
+  if (size<2) ot("  mov%s r0,r0%s\n",T2S,asl);
   ot("  %s r1,r0,r1%s\n",strop,asl);
 
   if (type&1) OpGetFlags(type==1,type&1); // add/subtract
@@ -194,7 +194,7 @@ int OpArithReg(int op)
   ot("\n");
 
   ot(";@ Save result:\n");
-  if (size<2) ot("  mov r1,r1,asr #%d\n",size?16:24);
+  if (size<2) ot("  mov%s r1,r1,asr #%d\n",T2S,size?16:24);
   if (dir) EaWrite(11, 1, ea,size,0x003f,earwt_msb_dont_care);
   else     EaWrite(11, 1,rea,size,0x0e00,earwt_msb_dont_care);
 
@@ -315,8 +315,7 @@ int OpMul(int op)
 
   EaCalcRead(-1,0,ea,1,0x003f,earwt_msb_dont_care);
 
-  EaCalc(11,0x0e00,rea, 2);
-  EaRead(11,     2,rea, 2,0x0e00);
+  EaCalcRead(11,2,rea,2,0x0e00);
 
   ot("  movs r1,r0,asl #16\n");
 
@@ -345,7 +344,7 @@ int OpMul(int op)
     ot("  bhs endofop%.4x ;@ overflow!\n",op);
     ot("\n");
 
-    ot("  sub r5,r5,#%d ;@ Minimum cycles divide loop can take\n",sign?74:66);
+    ot("  sub%s r5,r5,#%d ;@ Minimum cycles divide loop can take\n",T2S,sign?74:66);
 #if INLINE_UNROLLED_DIV
     UnrolledDiv();
 #else
@@ -357,7 +356,7 @@ int OpMul(int op)
     if (sign)
     {
       // sign correction
-      ot("  mov r3,r2,lsr #16\n");
+      ot("  mov%s r3,r2,lsr #16\n",T2S);
       ot("  cmn r12,r12\n");
       ot("  rsbvs r3,r3,#0 ;@ negate if quotient is negative\n");
       ot("  subvs r5,r5,#2\n");
@@ -373,7 +372,7 @@ int OpMul(int op)
       ot("  bne endofop%.4x ;@ overflow!\n",op);
       ot("\n");
 
-      ot("  mov r1,r1,lsr #16\n");
+      ot("  mov%s r1,r1,lsr #16\n",T2S);
       ot("  orr r1,r1,r2,lsl #16 ;@ Insert remainder\n");
     }
     else
@@ -389,6 +388,15 @@ int OpMul(int op)
   {
     ot(";@ Calculate cycles needed: 2*(#bits set in multiplier engine mask)\n");
     if (sign) ot("  eor r0,r1,r1,lsl #1\n");
+#if USE_THUMB2
+    ot("  and r3,r%d,#0xAAAAAAAA\n",sign?0:1);
+    ot("  sub r0,r%d,r3,lsr #1\n",sign?0:1);
+    ot("  and r3,r0,#0x33333333\n");
+    ot("  eors r0,r0,r3\n");
+    ot("  add r0,r3,r0,lsr #2\n");
+    ot("  add r0,r0,r0,lsr #4\n");
+    ot("  and r0,r0,#0x0F0F0F0F\n");
+#else
     ot("  mov r12,#0x0F000000 ;@ count top 16 bits, the O(1) way\n");
     ot("  orr r12,r12,r12,lsr #8 ;@ r12 = 0x0F0F0000\n");
     ot("  eor r10,r12,r12,lsl #2 ;@ r10 = 0x33330000\n");
@@ -400,6 +408,7 @@ int OpMul(int op)
     ot("  add r0,r0,r3\n");
     ot("  add r0,r0,r0,lsr #4\n");
     ot("  and r0,r12,r0\n");
+#endif
     ot("  add r0,r0,r0,lsl #8\n");
     ot("  sub r5,r5,r0,lsr #23 ;@ cycles -= 2*bitcount(mask)\n");
 
@@ -423,7 +432,7 @@ int OpMul(int op)
   if (type==0) // div
   {
     ot("divzero%.4x%s\n",op,ms?"":":");
-    ot("  mov r0,#5 ;@ Divide by zero\n");
+    ot("  mov%s r0,#5 ;@ Divide by zero\n",T2S);
     ot("  bl Exception\n");
     Cycles+=34-6;
     OpEnd(ea);
@@ -438,7 +447,7 @@ int GetXBit(int subtract)
 {
   ot(";@ Get X bit:\n");
   ot("  ldr r2,[r7,#0x4c]\n");
-  if (subtract) ot("  mvn r2,r2 ;@ Invert it\n");
+  if (subtract) ot("  mvn%s r2,r2 ;@ Invert it\n",T2S);
   ot("  movs r2,r2,lsl #3 ;@ Get into Carry\n");
   ot("\n");
   return 0;
@@ -468,8 +477,7 @@ int OpAbcd(int op)
   if (mem)
   {
     ot(";@ Get src/dest EA vals\n");
-    EaCalc (0,0x000f, sea,0,earwt_msb_dont_care);
-    EaRead (0,     6, sea,0,0x000f,earwt_msb_dont_care);
+    EaCalcRead(-1,6,sea,0,0x000f,earwt_msb_dont_care);
     EaCalcRead(11,0,dea,0,0x0e00,earwt_msb_dont_care);
   }
   else
@@ -479,53 +487,52 @@ int OpAbcd(int op)
     EaCalcRead(11,0,dea,0,0x0e00,earwt_msb_dont_care);
   }
 
-  ot("  bic r10,r10,#0xb1000000 ;@ clear all flags except old Z\n");
+  ot("  bic r10,r10,#0xb0000000 ;@ clear all flags except old Z\n");
 
   ot("  ldr r1,[r7,#0x4c] ;@ Get X bit\n");
   ot("  and r2,r0,#0x0f\n");
-  ot("  movs r12,r1,lsl #3 ;@ X into carry\n");
+  ot("  movs r1,r1,lsl #3 ;@ X into carry\n");
   ot("  and r1,r6,#0x0f\n");
   if (type)
   {
     // abcd
-    ot("  adc r1,r2,r1\n");
+    ot("  adc%s r1,r1,r2\n",T2S);
     ot("  cmp r1,#9\n");
 
     ot("  and r0,r0,#0xf0\n");
     ot("  and r6,r6,#0xf0\n");
     ot("  add r1,r1,r0\n");
     ot("  add r1,r1,r6\n");
-    ot("  mov r12,r1\n");
-    ot("  addhi r12,r12,#6 ;@ Decimal adjust units\n");
-    ot("  tst r1,#0x80\n");
-    ot("  orreq r10,r10,#0x10000000 ;@ Undefined V behavior\n");
-    ot("  cmp r12,#0x9f\n");
+    ot("  mov r3,r1\n");
+    ot("  addhi r3,r3,#6 ;@ Decimal adjust units\n");
+    ot("  movs r2,r1,lsr #8\n");
+    ot("  orrcc r10,r10,#0x10000000 ;@ Undefined V behavior\n");
+    ot("  cmp r3,#0x9f\n");
     ot("  orrhi r10,r10,#0x20000000 ;@ C\n");
-    ot("  subhi r12,r12,#0xa0\n");
-    ot("  movs r0,r12,lsl #24\n");
+    ot("  subhi r3,r3,#0xa0\n");
+    ot("  movs r0,r3,lsl #24\n");
     ot("  bicpl r10,r10,#0x10000000 ;@ Undefined V behavior part II\n");
   }
   else
   {
     // sbcd
-    ot("  mov r12,#0 ;@ corf\n");
+    ot("  mov%s r3,#0 ;@ corf\n",T2S);
     ot("  adc r1,r1,#0\n");
-    ot("  sub r1,r2,r1\n");
+    ot("  sub%s r1,r2,r1\n",T2S);
     ot("  cmp r1,#0x0f\n");
-    ot("  movhi r12,#6\n");
+    ot("  movhi r3,#6\n");
 
     ot("  and r0,r0,#0xf0\n");
     ot("  and r6,r6,#0xf0\n");
     ot("  add r1,r1,r0\n");
-    ot("  sub r1,r1,r6\n");
-    ot("  tst r1,#0x80\n");
-    ot("  orrne r10,r10,#0x10000000 ;@ Undefined V behavior\n");
-    ot("  cmp r1,r12\n");
+    ot("  sub%s r1,r1,r6\n",T2S);
+    ot("  cmp r1,r3\n");
     ot("  orrlt r10,r10,#0x20000000 ;@ C\n");
-    ot("  cmp r1,#0xff\n");
-    ot("  addhi r1,r1,#0xa0\n");
-    ot("  sub r12,r1,r12\n");
-    ot("  movs r0,r12,lsl #24\n");
+    ot("  movs r2,r1,lsr #8\n");
+    ot("  orrcs r10,r10,#0x10000000 ;@ Undefined V behavior\n");
+    ot("  addne r1,r1,#0xa0\n");
+    ot("  sub%s r3,r1,r3\n",T2S);
+    ot("  movs r0,r3,lsl #24\n");
     ot("  bicmi r10,r10,#0x10000000 ;@ Undefined V behavior part II\n");
   }
 
@@ -563,9 +570,8 @@ int OpNbcd(int op)
   // this is rewrite of Musashi's code
   ot("  ldr r2,[r7,#0x4c]\n");
   ot("  bic r10,r10,#0xb0000000 ;@ clear all flags, except Z\n");
-  ot("  and r2,r2,#0x20000000\n");
-  ot("  rsb r1,r0,#0 ;@ do arithmetic\n");
-  ot("  subs r1,r1,r2,lsr #29 ;@ X\n");
+  ot("  mov%s r2,r2,lsl #2 ;@ X bit into sign bit\n",T2S);
+  ot("  rsbs r1,r0,r2,asr #31 ;@ do arithmetic\n");
 
   ot("  beq finish%.4x\n",op);
   ot("\n");
@@ -636,10 +642,14 @@ int OpAritha(int op)
   }
 #endif
 
+#if HAVE_ARMv6
+  SignExtend(0,0,size);
+#else
   if (size<2) ot("  mov r0,r0,asl #%d\n\n",size?16:24);
   if (size<2) asr=(char *)(size?",asr #16":",asr #24");
+#endif
 
-  if (type==0) ot("  sub r1,r1,r0%s\n",asr);
+  if (type==0) ot("  sub%s r1,r1,r0%s\n",T2S,asr);
   if (type==1) ot("  cmp r1,r0%s ;@ Defines NZCV\n",asr);
   if (type==1) OpGetFlags(1,0); // Get Cmp flags
   if (type==2) ot("  add r1,r1,r0%s\n",asr);
@@ -684,8 +694,7 @@ int OpAddx(int op)
   if (mem)
   {
     ot(";@ Get src/dest EA vals\n");
-    EaCalc (0,0x000f, sea,size,earwt_shifted_up);
-    EaRead (0,     6, sea,size,0x000f,earwt_shifted_up);
+    EaCalcRead(-1,6,sea,size,0x000f,earwt_shifted_up);
     EaCalcRead(11,0,dea,size,0x0e00,earwt_msb_dont_care);
   }
   else
@@ -704,9 +713,19 @@ int OpAddx(int op)
   if (type==1 && size<2)
   {
     ot(";@ Make sure the carry bit will tip the balance:\n");
-    ot("  mvn r3,#0\n");
-    ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
-    ot("  orrcs r6,r6,r3,lsr #%i\n",(size==0)?8:16);
+#if USE_THUMB2
+    if (size==0)
+    {
+      ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
+      ot("  orncs r6,r6,#0xFF000000\n");
+    }
+    else
+#endif
+    {
+      ot("  mvn r3,#0\n");
+      ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
+      ot("  orrcs r6,r6,r3,lsr #%i\n",(size==0)?8:16);
+    }
     ot("\n");
   }
   else
@@ -723,7 +742,7 @@ int OpAddx(int op)
     ot("  movs r2,r1,lsr #%i\n", size?16:24);
     ot("  orreq r10,r10,#0x40000000 ;@ add potentially missed Z\n");
   }
-  ot("  andeq r10,r10,r3 ;@ fix Z\n");
+  ot("  and r10,r10,r3 ;@ fix Z\n");
   ot("\n");
 
   ot(";@ Save result:\n");
@@ -774,7 +793,7 @@ int OpCmpEor(int op)
   ot(";@ Get register operand into r1:\n");
   EaCalcRead(-1,1,rea,size,0x0e00,earwt_msb_dont_care);
 
-  if (size<2) ot("  mov r0,r0,asl #%d\n\n",size?16:24);
+  if (size<2) ot("  mov%s r0,r0,asl #%d\n\n",T2S,size?16:24);
   if (size<2) asl=(char *)(size?",asl #16":",asl #24");
 
   ot(";@ Do arithmetic:\n");
@@ -785,7 +804,8 @@ int OpCmpEor(int op)
   }
   else
   {
-    ot("  rsbs r1,r0,r1%s\n",asl);
+    if (size<2) ot("  rsbs r1,r0,r1%s\n",asl);
+    else        ot("  cmp r1,r0\n"); 
     OpGetFlags(1,0); // Cmp like subtract
   }
   ot("\n");
@@ -815,15 +835,15 @@ int OpCmpm(int op)
   OpStart(op,sea); Cycles=4;
 
   ot(";@ Get src operand into r11:\n");
-  EaCalc (0,0x0007, sea,size,earwt_shifted_up);
-  EaRead (0,    11, sea,size,0x0007,earwt_shifted_up);
+  EaCalcRead(-1,11,sea,size,0x0007,earwt_shifted_up);
 
   ot(";@ Get dst operand into r0:\n");
   EaCalcRead(-1,0,dea,size,0x0e00,earwt_msb_dont_care);
 
   if (size<2) asl=(char *)(size?",asl #16":",asl #24");
 
-  ot("  rsbs r0,r11,r0%s\n",asl);
+  if (size<2) ot("  rsbs r0,r11,r0%s\n",asl);
+  else        ot("  cmp r0,r11\n");
   OpGetFlags(1,0); // Cmp like subtract
   ot("\n");
 
@@ -885,7 +905,7 @@ int OpChk(int op)
   else        ot("  cmp r0,r1\n");
   ot("  subpl r5,r5,#2\n");
   ot("chktrap%.4x%s ;@ CHK exception:\n",op,ms?"":":");
-  ot("  mov r0,#6\n");
+  ot("  mov%s r0,#6\n",T2S);
   ot("  bl Exception\n");
   Cycles+=34-6;
   opend_op_changes_cycles=1;
