@@ -275,7 +275,10 @@ int OpNeg(int op)
   if(ea >= 0x10)  Cycles*=2;
 
   if (type==1) EaCalc (11,0x003f,ea,size,earwt_msb_dont_care);
-  if (type!=1) EaCalcRead (11,0,ea,size,0x003f,earwt_msb_dont_care); // Don't need to read for 'clr' (or do we, for a dummy read?)
+#if HAVE_ARMv6
+  else if (type==3) EaCalcRead (11,0,ea,size,0x003f,earwt_sign_extend);
+#endif
+  else EaCalcRead (11,0,ea,size,0x003f,earwt_msb_dont_care); // Don't need to read for 'clr' (or do we, for a dummy read?)
 
   if (type==0)
   {
@@ -319,7 +322,7 @@ int OpNeg(int op)
   {
     ot(";@ Not:\n");
 #if HAVE_ARMv6
-    SignExtend(0,0,size);
+    wtype=earwt_sign_extend;
 #else
     if(size!=2) {
       ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
@@ -398,25 +401,21 @@ int OpExt(int op)
 {
   int ea=0;
   int size=0,use=0;
-  int shift=0;
 
   ea=op&0x0007;
   size=(op>>6)&1;
-  shift=32-(8<<size);
 
   use=OpBase(op,size);
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 
   OpStart(op); Cycles=4;
 
-  EaCalcRead (11,     0,ea,size+1,0x0007,earwt_msb_dont_care);
+  EaCalcRead (11,     1,ea,size,0x0007,earwt_sign_extend,1,1);
 
-  ot("  movs r0,r0,asl #%d\n",shift);
-  OpGetFlagsNZ(0);
-  ot("  mov%s r1,r0,asr #%d\n",T2S,shift);
+  OpGetFlagsNZ(1);
   ot("\n");
 
-  EaWrite(11,     1,ea,size+1,0x0007,earwt_msb_dont_care);
+  EaWrite(11,     1,ea,size+1,0x0007,earwt_msb_dont_care,1);
 
   OpEnd();
   return 0;

@@ -151,7 +151,7 @@ static int EaCalcReg(int r,int ea,int mask,int forceor,int shift,int noshift=0)
 // If ea>=0x10, trashes r0,r2 and r3, else nothing
 // size values 0, 1, 2 ~ byte, word, long
 // mask shows usable bits in r8
-int EaCalc(int a,int mask,int ea,int size,EaRWType type)
+int EaCalc(int a,int mask,int ea,int size,EaRWType type,int force_shift)
 {
   char text[32]="";
   const char *s=a<8?T2S:"";
@@ -171,7 +171,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type)
   {
     // Saves one opcode as we can shift in ldr/str
     int noshift=0;
-    if (size >= 2 || (size == 0 && type != earwt_sign_extend)) noshift=1;
+    if (!force_shift && (size >= 2 || (size == 0 && type != earwt_sign_extend))) noshift=1;
 
     ot(";@ EaCalc : Get register index into r%d:\n",a);
 
@@ -320,7 +320,8 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type)
   {
     if (size<2)
     {
-      ot("  ldr%s r%d,[r4],#2 ;@ Fetch immediate value\n",Sarm[size&3],a); pc_dirty=1;
+      const char *suffix = (type==earwt_zero_extend?Narm[size&3]:Sarm[size&3]);
+      ot("  ldr%s r%d,[r4],#2 ;@ Fetch immediate value\n",suffix,a); pc_dirty=1;
       Cycles+=4; // Extra cycles
       return 0;
     }
@@ -339,7 +340,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type)
 // Read effective address in (ARM Register 'a') to ARM register 'v'
 // 'a' and 'v' can be anything but 0 is generally best (for both)
 // If (ea<0x10) nothing is trashed, else r0-r3,r12 is trashed
-int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int reversed)
+int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int force_shift,int reversed)
 {
   char text[32]="";
   const char *s="";
@@ -374,11 +375,12 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int rev
     int lsl=0,low=0,nsarm=size&3,i;
     const char *suffix;
 #if USE_THUMB2
+    (void)force_shift;
     (void)low;
     (void)i;
     lsl=2;
 #else
-    if (size >= 2 || (size == 0 && type != earwt_sign_extend)) {
+    if (!force_shift && (size >= 2 || (size == 0 && type != earwt_sign_extend))) {
       if (mask)
         for (i=mask|0x8000; (i&1)==0; i>>=1) low++; // Find out how high up the EA mask is
       lsl=2-low; // Having a lsl #2 here saves one opcode
@@ -456,7 +458,7 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int rev
 // else r0-r3 are trashed
 // size values 0, 1, 2 ~ byte, word, long
 // r_ea is reg to store ea in (-1 means ea is not needed), r is dst reg
-int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz)
+int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz,int force_shift)
 {
   int reversed=0;
   int c_ea;
@@ -482,8 +484,8 @@ int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz)
   }
 
   c_ea=reversed?0:r_ea;
-  EaCalc (c_ea,mask,ea,size,type);
-  EaRead (r_ea,   r,ea,size,mask,type,set_nz,reversed);
+  EaCalc (c_ea,mask,ea,size,type,force_shift);
+  EaRead (r_ea,   r,ea,size,mask,type,set_nz,force_shift,reversed);
 
   return 0;
 }
@@ -508,7 +510,7 @@ int EaCanRead(int ea,int size)
 // Write effective address (ARM Register 'a') with ARM register 'v'
 // Trashes r0-r3,r12,lr; 'a' can be 0 or 2+, 'v' can be 1 or higher
 // If a==0 and v==1 it's faster though.
-int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type)
+int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
 {
   char text[32]="";
   int shift=0;
@@ -524,11 +526,12 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type)
   {
     int lsl=0,low=0,i;
 #if USE_THUMB2
+    (void)force_shift;
     (void)low;
     (void)i;
     lsl=2;
 #else
-    if (size >= 2 || (size == 0 && type != earwt_sign_extend)) {
+    if (!force_shift && (size >= 2 || (size == 0 && type != earwt_sign_extend))) {
       if(mask)
         for (i=mask|0x8000; (i&1)==0; i>>=1) low++; // Find out how high up the EA mask is
       lsl=2-low; // Having a lsl #x here saves one opcode
