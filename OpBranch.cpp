@@ -443,9 +443,10 @@ int OpBranch(int op)
   int size=0,use=0,checkpc=0;
   int offset=0;
   int cc=0;
-  const char *asr_r11="";
+  const char *asr="";
   const char *cond;
   int pc_reg=0;
+  int ofs_reg=0;
 
   offset=(char)(op&0xff);
   cc=(op>>8)&15;
@@ -462,6 +463,8 @@ int OpBranch(int op)
   OpStart(op,size?0x10:0);
   Cycles=10; // Assume branch taken
 
+  if (cc==1) ofs_reg=11; // callee-save for Bsr push 
+
   if (cc>=2)
   {
     cond=TestCond(cc,1);
@@ -472,19 +475,23 @@ int OpBranch(int op)
   {
     if (size<2)
     {
-      ot("  ldrsh r11,[r4] ;@ Fetch Branch offset\n");
+      ot("  ldrsh r%d,[r4] ;@ Fetch Branch offset\n",ofs_reg);
     }
     else
     {
       ot("  ldrh r2,[r4] ;@ Fetch Branch offset\n");
-      ot("  ldrh r11,[r4,#2]\n");
-      ot("  orr r11,r11,r2,lsl #16\n");
+      ot("  ldrh r%d,[r4,#2]\n",ofs_reg);
+      ot("  orr r%d,r%d,r2,lsl #16\n",ofs_reg,ofs_reg);
     }
   }
   else
   {
-    ot("  mov r11,r8,asl #24 ;@ Shift 8-bit signed offset up...\n\n");
-    asr_r11=",asr #24";
+#if HAVE_ARMv6
+    SignExtend(ofs_reg,8,0);
+#else
+    ot("  mov r%d,r8,asl #24 ;@ Shift 8-bit signed offset up...\n\n",ofs_reg);
+    asr=",asr #24";
+#endif
   }
 
   ot(";@ Branch taken - Add on r0 to PC\n");
@@ -516,12 +523,12 @@ int OpBranch(int op)
 #endif
   if (checkpc)
   {
-    CheckPc(4,11,0,asr_r11);
+    CheckPc(4,ofs_reg,0,asr);
     pc_reg=0;
   }
   else
   {
-    ot("  add r4,r4,r11%s ;@ r4 = New PC\n",asr_r11);
+    ot("  add r4,r4,r%d%s ;@ r4 = New PC\n",ofs_reg,asr);
     pc_reg=4;
   }
 
