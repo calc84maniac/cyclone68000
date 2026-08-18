@@ -291,7 +291,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
   if (ea==0x3a) // ($nn,PC) (pcdi)
   {
     ot("  ldr r0,[r7,#0x60] ;@ Get Memory base\n");
-    ot("  sub r0,r4,r0 ;@ Real PC\n");
+    ot("  sub%s r0,r4,r0 ;@ Real PC\n",T2S);
     ot("  ldrsh r2,[r4],#2 ;@ Fetch extension\n"); pc_dirty=1;
     ot("  add%s r%d,r2,r0 ;@ ($nn,PC)\n",s,a);
     Cycles+=size<2 ? 8:12; // Extra cycles

@@ -90,6 +90,56 @@ const char *TestCond(int m68k_cc, int invert)
   return invert?icond:cond;
 }
 
+// Emit a Btst/Bchg/Bclr/Bset opcode
+static void EmitBtst(int type,int mem)
+{
+  if (mem) {
+    ot("  and r2,r11,#7  ;@ mem - do mod 8\n");  // size always 0
+    ot("\n");
+  } else if (type) {
+    ot("  movs r2,r2,lsl #27 ;@ reg - do mod 32\n"); // size always 2
+    ot("  submi r5,r5,#2 ;@ extra cycles\n");
+    ot("  mov%s r2,r2,lsr #27\n",T2S);
+    ot("\n");
+  }
+
+#if !HAVE_ARMv6T2
+  ot("  mov r1,#1\n");
+  ot("  bic r10,r10,#0x40000000 ;@ Clear Z flag\n");
+  ot("  tst r1,r0,ror r2 ;@ Test bit\n");
+  ot("  orreq r10,r10,#0x40000000 ;@ Get Z flag\n");
+  ot("\n");
+#endif
+
+  if (type>0)
+  {
+    const char *shift="";
+#if HAVE_ARMv6T2
+    ot("  mov%s r1,#1\n",T2S);
+#endif
+#if USE_THUMB2
+    ot("  movs r1,r1,lsl r2\n");
+#else
+    shift=",lsl r2";
+#endif
+    if (type==1) ot("  eor%s r1,r0,r1%s ;@ Toggle bit\n",T2S,shift);
+    if (type==2) ot("  bic r1,r0,r1%s ;@ Clear bit\n",shift);
+    if (type==3) ot("  orr%s r1,r0,r1%s ;@ Set bit\n",T2S,shift);
+    ot("\n");
+  }
+
+#if HAVE_ARMv6T2
+ #if USE_THUMB2
+  ot("  movs r0,r0,ror r2 ;@ Shift to bit 0 and invert\n");
+  ot("  mvns r0,r0\n");
+ #else
+  ot("  mvn r0,r0,ror r2 ;@ Shift to bit 0 and invert\n");
+ #endif
+  ot("  bfi r10,r0,#30,#1 ;@ Replace Z flag\n");
+  ot("\n");
+#endif
+}
+
 // --------------------- Opcodes 0x0100+ ---------------------
 // Emit a Btst (Register) opcode 0000nnn1 ttaaaaaa
 int OpBtstReg(int op)
@@ -129,47 +179,15 @@ int OpBtstReg(int op)
     if(type==2 && tea>=0x10) Cycles+=2;
   }
 
-  EaCalcRead(-1,11,sea,0,0x0e00,earwt_msb_dont_care);
+  EaCalcRead(-1,(size==0)?11:2,sea,0,0x0e00,earwt_msb_dont_care);
 
   EaCalcRead((type>0)?8:-1,0,tea,size,0x003f,earwt_msb_dont_care);
 
-  if (tea>=0x10)
-       ot("  and r2,r11,#7  ;@ mem - do mod 8\n");  // size always 0
-  else {
-       ot("  and r2,r11,#31 ;@ reg - do mod 32\n"); // size always 2
-       if (type) {
-         ot("  mov%s r1,r2,lsr #4 ;@ extra cycles\n",T2S);
-         ot("  sub r5,r5,r1,lsl #1\n");
-       }
-  }
-  ot("\n");
-
-  ot("  mov%s r1,#1\n",T2S);
-#if USE_THUMB2
-  ot("  movs r1,r1,lsl r2\n");
-  if (type!=2) ot("  tst r1,r0 ;@ Do arithmetic\n");
-  else         ot("  ands r1,r1,r0 ;@ Do arithmetic\n");
-#else
-  ot("  tst r0,r1,lsl r2 ;@ Do arithmetic\n");
-#endif
-  ot("  bicne r10,r10,#0x40000000\n");
-  ot("  orreq r10,r10,#0x40000000 ;@ Get Z flag\n");
-  ot("\n");
+  EmitBtst(type,size==0);
 
   if (type>0)
-  {
-#if USE_THUMB2
-    if (type==1) ot("  eors r1,r1,r0 ;@ Toggle bit\n");
-    if (type==2) ot("  subs r1,r0,r1 ;@ Clear bit\n");
-    if (type==3) ot("  orrs r1,r1,r0 ;@ Set bit\n");
-#else
-    if (type==1) ot("  eor r1,r0,r1,lsl r2 ;@ Toggle bit\n");
-    if (type==2) ot("  bic r1,r0,r1,lsl r2 ;@ Clear bit\n");
-    if (type==3) ot("  orr r1,r0,r1,lsl r2 ;@ Set bit\n");
-#endif
-    ot("\n");
     EaWrite(8,1,tea,size,0x003f,earwt_msb_dont_care);
-  }
+
   opend_op_changes_cycles=tea<0x10;
   OpEnd(tea);
 
@@ -203,22 +221,7 @@ int OpBtstImm(int op)
   OpStart(op,sea,tea,tea<0x10);
 
   ot("\n");
-  EaCalcRead(-1,0,sea,0,0,earwt_msb_dont_care);
-  ot("  mov%s r1,#1\n",T2S);
-  ot("  bic r10,r10,#0x40000000 ;@ Blank Z flag\n");
-  if (tea>=0x10) {
-    ot("  and r0,r0,#7       ;@ mem - do mod 8\n");  // size always 0
-    ot("  mov r11,r1,lsl r0  ;@ Make bit mask\n");
-  } else if (type) {
-    ot("  movs r0,r0,lsl #27 ;@ reg - do mod 32\n"); // size always 2
-    ot("  submi r5,r5,#2     ;@ extra cycles\n");
-    ot("  mov%s r0,r0,lsr #27\n",T2S);
-    ot("  mov r11,r1,lsl r0  ;@ Make bit mask\n");
-  } else {
-    ot("  rsb%s r0,r0,#0       ;@ reg - do mod 32\n",T2S); // size always 2
-    ot("  mov r11,r1,ror r0  ;@ Make bit mask\n");
-  }
-  ot("\n");
+  EaCalcRead(-1,(size==0)?11:2,sea,0,0,earwt_msb_dont_care);
 
   if(type==1||type==3) {
     Cycles=10;
@@ -229,16 +232,11 @@ int OpBtstImm(int op)
   if(type && tea>=0x10) Cycles+=2;
 
   EaCalcRead((type>0)?8:-1,0,tea,size,0x003f,earwt_msb_dont_care);
-  ot("  tst r0,r11 ;@ Do arithmetic\n");
-  ot("  orreq r10,r10,#0x40000000 ;@ Get Z flag\n");
-  ot("\n");
+
+  EmitBtst(type,size==0);
 
   if (type>0)
   {
-    if (type==1) ot("  eor r1,r0,r11 ;@ Toggle bit\n");
-    if (type==2) ot("  bic r1,r0,r11 ;@ Clear bit\n");
-    if (type==3) ot("  orr r1,r0,r11 ;@ Set bit\n");
-    ot("\n");
     EaWrite(8, 1,tea,size,0x003f,earwt_msb_dont_care);
 #if CYCLONE_FOR_GENESIS && !MEMHANDLERS_CHANGE_CYCLES
     // this is a bit hacky (device handlers might modify cycles)

@@ -171,8 +171,15 @@ int OpGetFlags(int subtract,int xbit,int specialz)
 
 void OpGetFlagsNZ(int rd)
 {
+#if USE_THUMB2
+  // Reduce code bloat by avoiding an IT instruction,
+  // since Thumb-2 only platforms tend to have cheap MRS
+  ot("  mrs r10,apsr ;@ r10=flags\n");
+  ot("  and r10,r10,#0xc0000000 ;@ get NZ, clear CV\n");
+#else
   ot("  and r10,r%d,#0x80000000 ;@ r10=N_flag\n",rd);
   ot("  orreq r10,r10,#0x40000000 ;@ get NZ, clear CV\n");
+#endif
   flags_in_reg=1;
 }
 

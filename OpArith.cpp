@@ -743,7 +743,7 @@ int OpAddx(int op)
     ot(";@ Get src/dest reg vals\n");
     EaCalcRead(-1,6,sea,size,0x0007,earwt_msb_dont_care);
     EaCalcRead(11,0,dea,size,0x0e00,earwt_msb_dont_care);
-    if (size<2) ot("  mov r6,r6,asl #%d\n\n",size?16:24);
+    if (size<2) ot("  mov%s r6,r6,asl #%d\n\n",T2S,size?16:24);
   }
 
   if (size<2) asl=(char *)(size?",asl #16":",asl #24");
@@ -780,14 +780,14 @@ int OpAddx(int op)
   ot("  orr r3,r10,#0xb0000000 ;@ for old Z\n");
   OpGetFlags(0,1,0); // subtract
   if (type==0 && size<2) {
-    ot("  movs r2,r1,lsr #%i\n", size?16:24);
+    ot("  movs r1,r1,lsr #%i\n", size?16:24);
     ot("  orreq r10,r10,#0x40000000 ;@ add potentially missed Z\n");
   }
   ot("  and r10,r10,r3 ;@ fix Z\n");
   ot("\n");
 
   ot(";@ Save result:\n");
-  EaWrite(11, 1, dea,size,0x0e00,earwt_shifted_up);
+  EaWrite(11, 1, dea,size,0x0e00,type==1?earwt_shifted_up:earwt_zero_extend);
 
   ot("  ldr r6,[r7,#0x54]\n");
   OpEnd(sea,dea);
