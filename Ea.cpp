@@ -151,7 +151,7 @@ static int EaCalcReg(int r,int ea,int mask,int forceor,int shift,int noshift=0)
 // If ea>=0x10, trashes r0,r2 and r3, else nothing
 // size values 0, 1, 2 ~ byte, word, long
 // mask shows usable bits in r8
-int EaCalc(int a,int mask,int ea,int size,EaRWType type,int force_shift)
+int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shift)
 {
   char text[32]="";
   const char *s=a<8?T2S:"";
@@ -328,7 +328,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int force_shift)
 
     ot("  ldrh r2,[r4],#2 ;@ Fetch immediate value\n");
     ot("  ldrh r3,[r4],#2\n"); pc_dirty=1;
-    ot("  orr r%d,r3,r2,lsl #16\n",a);
+    ot("  orr%s r%d,r3,r2,lsl #16\n",set_nz?"s":"",a);
     Cycles+=8; // Extra cycles
     return 0;
   }
@@ -484,7 +484,8 @@ int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz,
   }
 
   c_ea=reversed?0:r_ea;
-  EaCalc (c_ea,mask,ea,size,type,force_shift);
+  EaCalc (c_ea,mask,ea,size,type,set_nz,force_shift);
+  if (ea==0x3c&&size==2) set_nz=0; // already set
   EaRead (r_ea,   r,ea,size,mask,type,set_nz,force_shift,reversed);
 
   return 0;

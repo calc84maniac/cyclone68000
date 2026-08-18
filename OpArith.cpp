@@ -20,6 +20,8 @@ int OpArith(int op)
   int sea=0,tea=0;
   int use=0;
   const char *shiftstr="";
+  EaRWType stype=earwt_msb_dont_care;
+  EaRWType ttype=earwt_shifted_up;
 
   // Get source and target EA
   type=(op>>9)&7; if (type==4 || type>=7) return 1;
@@ -36,21 +38,26 @@ int OpArith(int op)
 
   OpStart(op, sea, tea); Cycles=4;
 
-  // imm must be read first
-  EaCalcRead(-1,10,sea,size,0,earwt_msb_dont_care);
-  EaCalcRead((type!=6)?11:-1,0,tea,size,0x003f,earwt_msb_dont_care);
+  if (tea<0x10&&(type<2||type==5)) {
+      // Do register-based bitwise ops with sign extension
+      stype=earwt_sign_extend;
+      ttype=earwt_sign_extend;
+  }
 
-  if (size<2) shiftstr=(char *)(size?",asl #16":",asl #24");
-  if (size<2) ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
+  // imm must be read first
+  EaCalcRead(-1,10,sea,size,0,stype);
+  EaCalcRead((type!=6)?11:-1,0,tea,size,0x003f,ttype);
+
+  if (size<2&&ttype==earwt_shifted_up) shiftstr=(char *)(size?",asl #16":",asl #24");
 
   ot(";@ Do arithmetic:\n");
 
   if (type==0) ot("  orrs r1,r0,r10%s\n",shiftstr);
   if (type==1) ot("  ands r1,r0,r10%s\n",shiftstr);
-  if (type==2||type==6)
-               ot("  subs r1,r0,r10%s ;@ Defines NZCV\n",shiftstr);
+  if (type==2) ot("  subs r1,r0,r10%s ;@ Defines NZCV\n",shiftstr);
   if (type==3) ot("  adds r1,r0,r10%s ;@ Defines NZCV\n",shiftstr);
   if (type==5) ot("  eors r1,r0,r10%s\n",shiftstr);
+  if (type==6) ot("  cmp r0,r10%s ;@ Defines NZCV\n",shiftstr);
 
   if (type< 2) OpGetFlagsNZ(1); // Ori/And
   if (type==2) OpGetFlags(1,1); // Sub: Subtract/X-bit
@@ -61,7 +68,7 @@ int OpArith(int op)
 
   if (type!=6)
   {
-    EaWrite(11, 1, tea,size,0x003f,earwt_shifted_up);
+    EaWrite(11, 1, tea,size,0x003f,ttype);
   }
 
   // Correct cycles:
@@ -151,8 +158,11 @@ int OpArithReg(int op)
 {
   int use=0;
   int type=0,size=0,dir=0,rea=0,ea=0;
-  const char *asl="";
+  const char *shift="";
   const char *strop=0;
+  EaRWType reg_rtype=earwt_msb_dont_care;
+  EaRWType rtype=earwt_msb_dont_care;
+  EaRWType wtype=earwt_shifted_up;
 
   type=(op>>12)&5;
   rea =(op>> 9)&7;
@@ -173,9 +183,21 @@ int OpArithReg(int op)
 
   OpStart(op,ea); Cycles=4;
 
-  EaCalcRead(dir?11:-1,0,ea,size,0x003f,earwt_msb_dont_care);
+  if ((ea<0x10||ea==0x3c)&&!(type&1)) {
+    // Do register/imm-based bitwise operations on sign-extended values
+    reg_rtype=earwt_sign_extend;
+    rtype=earwt_sign_extend;
+    wtype=earwt_sign_extend;
+  } else if (!dir&&!(type&1)) {
+    // Do other register-destination bitwise operations on sign-extended values,
+    // but without auto-extending the source
+    reg_rtype=earwt_sign_extend;
+    wtype=earwt_sign_extend;
+  }
 
-  EaCalcRead(dir?-1:11,1,rea,size,0x0e00,earwt_msb_dont_care);
+  EaCalcRead(dir?11:-1,0,ea,size,0x003f,rtype);
+
+  EaCalcRead(dir?-1:11,1,rea,size,0x0e00,reg_rtype);
 
   ot(";@ Do arithmetic:\n");
   if (type==0) strop = "orrs";
@@ -183,20 +205,30 @@ int OpArithReg(int op)
   if (type==4) strop = "ands";
   if (type==5) strop = "adds";
 
-  if (size==0) asl=",asl #24";
-  if (size==1) asl=",asl #16";
-
-  if (size<2) ot("  mov%s r0,r0%s\n",T2S,asl);
-  ot("  %s r1,r0,r1%s\n",strop,asl);
+  if (size<2) {
+    if (wtype==earwt_shifted_up) {
+      shift=size?",asl #16":",asl #24";
+      ot("  mov%s r0,r0%s\n",T2S,shift);
+    } else if (wtype==earwt_sign_extend&&rtype==earwt_msb_dont_care) {
+#if HAVE_ARMv6
+      SignExtend(0,0,size);
+#else
+      shift=size?",asl #16":",asl #24";
+      ot("  mov%s r0,r0%s\n",T2S,shift);
+      shift=size?",asr #16":",asr #24";
+#endif
+    }
+  }
+  if (wtype==earwt_shifted_up) ot("  %s r1,r0,r1%s\n",strop,shift);
+  else                         ot("  %s r1,r1,r0%s\n",strop,shift);
 
   if (type&1) OpGetFlags(type==1,type&1); // add/subtract
   else        OpGetFlagsNZ(1);
   ot("\n");
 
   ot(";@ Save result:\n");
-  if (size<2) ot("  mov%s r1,r1,lsr #%d\n",T2S,size?16:24);
-  if (dir) EaWrite(11, 1, ea,size,0x003f,earwt_zero_extend);
-  else     EaWrite(11, 1,rea,size,0x0e00,earwt_zero_extend);
+  if (dir) EaWrite(11, 1, ea,size,0x003f,wtype);
+  else     EaWrite(11, 1,rea,size,0x0e00,wtype);
 
   if(rea==ea) {
     if(ea<8) Cycles=(size>=2)?8:4; else Cycles+=(size>=2)?26:14;
@@ -622,6 +654,7 @@ int OpAritha(int op)
   int use=0;
   int type=0,size=0,sea=0,dea=0;
   const char *asr="";
+  EaRWType stype=earwt_msb_dont_care;
 
   // Suba/Cmpa/Adda/(invalid):
   type=(op>>13)&3; if (type>=3) return 1;
@@ -638,30 +671,24 @@ int OpAritha(int op)
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 
   OpStart(op,sea); Cycles=(size==2)?6:8;
-  if(size==2&&(sea<0x10||sea==0x3c)) Cycles+=2;
+  if(sea<0x10||sea==0x3c) {
+    if (size==2) Cycles+=2;
+    stype=earwt_sign_extend;    
+  }
   if(type==1) Cycles=6;
 
   // EA calculation order defines how situations like  suba.w (A0)+, A0 get handled.
-  // different emus act differently in this situation, I couldn't fugure which is right behaviour.
-  //if (type == 1)
-  {
-    EaCalcRead(-1,0,sea,size,0x003f,earwt_msb_dont_care);
-    EaCalcRead(type!=1?11:-1,1,dea,2,0x0e00,earwt_msb_dont_care);
-  }
-#if 0
-  else
-  {
-    EaCalcRead(type!=1?11:-1,1,dea,2,0x0e00,earwt_msb_dont_care);
-    EaCalcRead(-1,0,sea,size,0x003f,earwt_msb_dont_care);
-  }
-#endif
+  EaCalcRead(-1,0,sea,size,0x003f,stype);
+  EaCalcRead(type!=1?11:-1,1,dea,2,0x0e00,earwt_msb_dont_care);
 
+  if (stype!=earwt_sign_extend) {
 #if HAVE_ARMv6
-  SignExtend(0,0,size);
+    SignExtend(0,0,size);
 #else
-  if (size<2) ot("  mov r0,r0,asl #%d\n\n",size?16:24);
-  if (size<2) asr=(char *)(size?",asr #16":",asr #24");
+    if (size<2) ot("  mov r0,r0,asl #%d\n\n",size?16:24);
+    if (size<2) asr=(size?",asr #16":",asr #24");
 #endif
+  }
 
   if (type==0) ot("  sub%s r1,r1,r0%s\n",T2S,asr);
   if (type==1) ot("  cmp r1,r0%s ;@ Defines NZCV\n",asr);
@@ -775,6 +802,8 @@ int OpCmpEor(int op)
   int rea=0,eor=0;
   int size=0,ea=0,use=0;
   const char *asl="";
+  EaRWType rtype=earwt_msb_dont_care;
+  EaRWType wtype=earwt_shifted_up;
 
   // Get EA and register EA
   rea=(op>>9)&7;
@@ -801,14 +830,22 @@ int OpCmpEor(int op)
     if(size>=2)  Cycles+=2;
   }
 
+  if (eor&&ea<0x10) {
+    // Do register-based bitwise operations on sign-extended values
+    rtype=earwt_sign_extend;
+    wtype=earwt_sign_extend;
+  }
+
   ot(";@ Get EA into r11 and value into r0:\n");
-  EaCalcRead(eor?11:-1,0,ea,size,0x003f,earwt_msb_dont_care);
+  EaCalcRead(eor?11:-1,0,ea,size,0x003f,rtype);
 
   ot(";@ Get register operand into r1:\n");
-  EaCalcRead(-1,1,rea,size,0x0e00,earwt_msb_dont_care);
+  EaCalcRead(-1,1,rea,size,0x0e00,rtype);
 
-  if (size<2) ot("  mov%s r0,r0,asl #%d\n\n",T2S,size?16:24);
-  if (size<2) asl=(char *)(size?",asl #16":",asl #24");
+  if (size<2&&wtype==earwt_shifted_up) {
+    ot("  mov%s r0,r0,asl #%d\n\n",T2S,size?16:24);
+    asl=(char *)(size?",asl #16":",asl #24");
+  }
 
   ot(";@ Do arithmetic:\n");
   if (eor)
@@ -824,7 +861,7 @@ int OpCmpEor(int op)
   }
   ot("\n");
 
-  if (eor) EaWrite(11, 1,ea,size,0x003f,earwt_shifted_up);
+  if (eor) EaWrite(11, 1,ea,size,0x003f,wtype);
 
   OpEnd(ea);
   return 0;
