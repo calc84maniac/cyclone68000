@@ -55,6 +55,10 @@
 #define HAVE_ARMv4_ARM9 0
 #endif
 
+#if !defined(HAVE_UNALIGNED_ACCESSES)
+#define HAVE_UNALIGNED_ACCESSES HAVE_ARMv6
+#endif
+
 #if !defined(USE_UAL_SYNTAX)
 #define USE_UAL_SYNTAX 0
 #endif

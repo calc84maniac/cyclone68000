@@ -38,6 +38,16 @@
 #endif
 
 /*
+ * If the following macro is defined, overrides the architecture default
+ * for unaligned data accesses. By default, ARMv6 and up will use
+ * unaligned accesses when fetching 32-bit operands for instructions.
+ * This should be explicitly disabled if the target system has unaligned
+ * access traps enabled.
+ */
+/* #define HAVE_UNALIGNED_ACCESSES     0 */
+
+
+/*
  * Enable this option to generate Thumb-2 compatible assembly.
  * This option implicitly enables all architectures ARMv6T2 and below,
  * as well as UAL syntax.
