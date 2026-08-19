@@ -471,10 +471,11 @@ int OpSet(int op)
 }
 
 // Emit a Asr/Lsr/Roxr/Ror opcode
-static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
+static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWType eatype)
 {
-  char pct[12]=""; // count
-  int shift=32-(8<<size);
+  char pct[13]=""; // count
+  int wide=8<<size;
+  int shift=32-wide;
 
   if (count>=1) sprintf(pct,"#%d",count); // Fixed count
 
@@ -510,41 +511,44 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
   if (type<2)
   {
     // Asr/Lsr
-    if (dir==0 && size<2)
-    {
-      ot(";@ For shift right, use loworder bits for the operation:\n");
-      ot("  mov%s r0,r0,%s #%d\n",T2S,type?"lsr":"asr",32-(8<<size));
-      ot("\n");
+    int asl=(type==0&&dir);
+
+    if (shift && (dir^(eatype==earwt_shifted_up))) {
+      if (usereg||count<0||asl||(dir&&(count+shift==32))) {
+        // register-based shifts, Asl, or Lsl by a total of 32 require pre-shift
+        if (type==0) ot("  mov%s r0,r0,%s #%d\n",T2S,dir?"asl":"asr",shift);
+        if (type==1) ot("  mov%s r0,r0,%s #%d\n",T2S,dir?"lsl":"lsr",shift);
+      } else {
+        // otherwise, combine the shift with the pre-shift
+        sprintf(pct,"#%d",count+shift);
+      }
     }
 
-    ot("  adds r3,r0,#0 ;@ clear C and V");
-    if (type==0 && dir) ot(", also save old value for V flag calculation");
-    ot("\n");
+    if (!asl)
+      ot("  adds r3,r3,#0 ;@ clear C and V, avoiding false register dependency on r0\n");
+    else if (count!=1)
+      ot("  adds r3,r0,#0 ;@ clear C and V, also save old value for V flag calculation\n"); 
 
     ot(";@ Shift register:\n");
-    if (type==0) ot("  movs r0,r0,%s %s\n",dir?"asl":"asr",pct);
-    if (type==1) ot("  movs r0,r0,%s %s\n",dir?"lsl":"lsr",pct);
+    if (asl&&count==1)
+      ot("  adds r0,r0,r0 ;@ includes V flag\n");
+    else if (type==0)
+      ot("  movs r0,r0,%s %s\n",dir?"asl":"asr",pct);
+    else
+      ot("  movs r0,r0,%s %s\n",dir?"lsl":"lsr",pct);
 
-    OpGetFlags(0,0);
+    OpGetFlags(0,!usereg);
     if (usereg) { // store X only if count is not 0
       ot("  cmp %s,#0 ;@ shifting by 0?\n",pct);
-      ot("  strne r10,[r7,#0x4c] ;@ if not, Save X bit\n");
-    } else {
-      // count will never be 0 if we use immediate
-      ot("  str r10,[r7,#0x4c] ;@ Save X bit\n");
+      ot("  strne r10,[r7,#0x4c] ;@ if not, Save X bit\n");      
+      if (type && dir==0 && size<2) {
+        ot("  moveq r3,r0,lsr #%d\n",wide-1);
+        ot("  orreq r10,r10,r3,lsl #31 ;@ if so, add missed N flag\n");
+      }
     }
     ot("\n");
 
-    if (dir==0 && size<2)
-    {
-      ot(";@ restore after right shift:\n");
-      ot("  movs r0,r0,lsl #%d\n",32-(8<<size));
-      if (type)
-        ot("  orrmi r10,r10,#0x80000000 ;@ Potentially missed N flag\n");
-      ot("\n");
-    }
-
-    if (type==0 && dir) {
+    if (asl&&count!=1) {
       ot(";@ calculate V flag (set if sign bit changes at anytime):\n");
 #if USE_THUMB2
       if (pct[0]=='r') {
@@ -562,134 +566,131 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg)
   // --------------------------------------
   if (type==2)
   {
+    const char *sh_fwd=dir?"lsl":"lsr";
+    const char *sh_rev=dir?"lsr":"lsl";
     char pct_rev[12]=""; // reverse count
-    int wide=8<<size;
 
     // Roxr
+    if (count==8 && size==0) {
+        count=1;
+        dir^=1;
+    }
+    
     if(count == 1)
     {
       ot("  ldr r2,[r7,#0x4c] ;@ X bit\n");
       if(dir==0) {
         if(size!=2) {
-          ot("  orr r0,r0,r0,lsr #%i\n", size?16:24);
+          ot("  adds r0,r0,r0,%s #%i ;@ Clear V flag\n",eatype==earwt_shifted_up?"lsr":"lsl",shift);
           ot("  bic r0,r0,#0x%x\n", 1<<(32-wide));
+        } else {
+          ot("  adds r1,r1,#0 ;@ Clear V flag\n");
         }
         ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
         ot("  movs r0,r0,rrx\n");
         OpGetFlags(0,1);
       } else {
-        ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
         if (size!=2) {
-          ot("  orrcs r0,r0,#0x%x\n", 1<<(31-wide));
+          if (eatype!=earwt_shifted_up)
+            ot("  mov%s r0,r0,lsl #%i\n",T2S,shift);
+          ot("  and r2,r2,#0x20000000 ;@ Isolate X bit\n");
+          ot("  adds r0,r0,r2,lsr #29-%d ;@ Clear V flag\n",31-wide);
           ot("  movs r0,r0,lsl #1\n");
         } else {
+          ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
           ot("  adcs r0,r0,r0\n");
         }
         OpGetFlags(0,1);
+        if (size==2) ot("  bic r10,r10,#0x10000000 ;@ make sure V is clear\n");
       }
-      ot("  bic r10,r10,#0x10000000 ;@ make sure V is clear\n");
+      if (size!=2 && eatype!=earwt_shifted_up)
+        ot("  mov%s r0,r0,lsr #%d\n",T2S,shift);
       return 0;
     }
 
+    if (usereg||count < 0)
+      strcpy(pct_rev,"r1");
+    else
+      sprintf(pct_rev,"#%d",wide-count);
+
+    ot("  ldr r3,[r7,#0x4c] ;@ X bit\n");
+
     if (usereg)
     {
+      ot(";@ Reduce rotation amount modulo %d:\n",wide+1);
       if (size==2)
-      {
-        ot("  subs r2,r2,#33\n");
-        ot(UAL(add,s,mi) "r2,r2,#33 ;@ Now r2=0-%d\n",wide);
-      }
+        ot("  subs r2,r2,#%d\n",wide+1);
       else
       {
-        ot(";@ Reduce r2 until <0:\n");
-        ot("Reduce_%.4x%s\n",op,ms?"":":");
-        ot("  subs r2,r2,#%d\n",wide+1);
-        ot("  bpl Reduce_%.4x\n",op);
-        ot("  adds r2,r2,#%d ;@ Now r2=0-%d\n",wide+1,wide);
+        ot("  and r1,r2,#%d\n",wide-1);
+        ot("  subs r2,r1,r2,lsr #%d\n",3+size);
       }
-      ot("  beq norotx_%.4x\n",op);
-      ot("\n");
+      ot("  addmi r2,r2,#%d ;@ Now r2=0-%d\n",wide+1,wide);
     }
 
     if (usereg||count < 0)
-    {
-      if (dir) ot("  rsb r2,r2,#%d ;@ Reverse direction\n",wide+1);
-      strcpy(pct_rev,"r1");
-    }
-    else
-    {
-      // Fixed count
-      if (dir) {
-        sprintf(pct,"#%d",wide+1-count);
-        sprintf(pct_rev,"#%d",count-1);
-      } else {
-        // Non-reversed count buffer is already correct
-        sprintf(pct_rev,"#%d",wide-count);
-      }
-      
-    }
+      ot("  rsbs r1,r2,#%d ;@ should also clear ARM V\n",wide);
+    else if (!shift)
+      ot("  adds r1,r1,#0 ;@ clear V flag\n");
 
-    if (shift) ot("  mov%s r0,r0,lsr #%d ;@ Shift down\n",T2S,shift);
-
+    if (dir&&shift) ot("  mov%s r0,r0,lsl #%d ;@ shift value to upper bits\n",T2S,shift);
     ot("\n");
-    ot(";@ First get X bit (bottom):\n");
-    ot("  ldr r3,[r7,#0x4c]\n");
-    if (usereg||count < 0) ot("  rsbs %s,%s,#%d ;@ should also clear ARM V\n",pct_rev,pct,wide);
-#if HAVE_ARMv6T2
-    ot("  ubfx r3,r3,#29,#1\n");
-#else
-    ot("  and r3,r3,#0x20000000\n");
-    ot("  mov r3,r3,lsr #29\n");
-#endif
 
     ot(";@ Rotate bits:\n");
-    if (usereg||count < 0) {
-        ot("  orrs r3,r3,r0,lsl #1 ;@ Orr left part above X bit, set C flag\n");
-        ot("  mov r0,r0,lsr %s ;@ Shift right part, preserve carry flag\n",pct);
-    } else {
-        ot("  adds r3,r3,r0,lsl #1 ;@ Add left part above X bit, clear V flag\n");
-        ot("  mov%s r0,r0,lsr %s ;@ Shift right part\n",T2S,pct);
-    }
+    ot("  movs r3,r3,lsl #3 ;@ Get X bit into Carry\n");
+    if (dir) ot("  mov r3,r0,rrx ;@ Rotate X bit into reverse part\n");
+    else     ot("  adc r3,r0,r0 ;@ Rotate X bit into reverse part, preserve V flag\n");
+
+    if (shift) ot("  mov%s r0,r0,%s %s ;@ Shift forward part\n",T2S,sh_fwd,pct);
+    else       ot("  movs r0,r0,%s %s ;@ Shift forward part, set C flag\n",sh_fwd,pct);
+
 #if USE_THUMB2
     if (pct_rev[0]=='r') {
-      ot("  movs r3,r3,lsl %s ;@ Shift left part and X bit, set C flag if %s!=0\n",pct_rev,pct_rev);
-      ot("  orrs r0,r0,r3 ;@ Orr left part, set NZ flags\n");
+      ot("  movs r3,r3,%s %s ;@ Shift reverse part and X bit, set C flag\n",sh_rev,pct_rev);
+      if (shift) ot("  adds r0,r0,r3 ;@ Add both parts, clear V flag\n");
+      else       ot("  orrs r0,r0,r3 ;@ Orr both parts, set NZ flags\n");
     }
     else
 #endif
-      ot("  orrs r0,r0,r3,lsl %s ;@ Orr left part, set flags\n",pct_rev);
+      if (shift) ot("  adds r0,r0,r3,%s %s ;@ Add reverse part, clear V flag\n",sh_rev,pct_rev);
+      else       ot("  orrs r0,r0,r3,%s %s ;@ Orr reverse part, set flags\n",sh_rev,pct_rev);
     ot("\n");
 
-    if (shift) ot("  movs r0,r0,lsl #%d ;@ Shift up and get correct NC flags\n",shift);
-    OpGetFlags(0,!usereg);
-    if (usereg) { // store X only if count is not 0
-      ot("  str r10,[r7,#0x4c] ;@ if not 0, Save X bit\n");
-      ot("  b nozerox%.4x\n",op);
-      ot("norotx_%.4x%s\n",op,ms?"":":");
-      ot("  ldr r2,[r7,#0x4c]\n");
-      ot("  adds r0,r0,#0 ;@ Define flags\n");
-      OpGetFlagsNZ(0);
-      ot("  and r2,r2,#0x20000000\n");
-      ot("  add r10,r10,r2 ;@ C = old_X\n");
-      ot("nozerox%.4x%s\n",op,ms?"":":");
-    }
-
+    if (shift&& dir) ot("  movs r0,r0,asr #%d ;@ Shift down and get correct NC flags\n",shift);
+    if (shift&&!dir) ot("  movs r1,r0,lsl #%d ;@ Shift up and get correct NC flags\n",shift);
+    OpGetFlags(0,1);
     ot("\n");
   }
 
   // --------------------------------------
   if (type==3)
   {
+    int flags_cleared=0;
     // Ror
     if (size<2)
     {
       ot(";@ Mirror value in whole 32 bits:\n");
-      if (size<=0) ot("  orr r0,r0,r0,lsr #8\n");
-      if (size<=1) ot("  orr r0,r0,r0,lsr #16\n");
+      if (eatype==earwt_zero_extend) {
+        if (size<=0) ot("  orr r0,r0,r0,lsl #8\n");
+        if (size<=1) ot("  adds r0,r0,r0,lsl #16 ;@ first clear V and C\n");
+        flags_cleared=1;
+      } else { /*earwt_msb_dont_care*/
+#if HAVE_ARMv6T2
+        if (size<=0) ot("  bfi r0,r0,#8,#8\n");
+        if (size<=1) ot("  bfi r0,r0,#16,#16\n");
+#else
+        ot("  mov r0,r0,lsl #%d\n",shift);
+        if (size<=0) ot("  orr r0,r0,r0,lsr #8\n");
+        if (size<=1) ot("  adds r0,r0,r0,lsr #16 ;@ first clear V and C\n");
+        flags_cleared=1;
+#endif
+      }
       ot("\n");
     }
 
     ot(";@ Rotate register:\n");
-    if (!dir) ot("  adds r0,r0,#0 ;@ first clear V and C\n"); // ARM does not clear C if rot count is 0
+    if (!dir && !flags_cleared)
+      ot("  adds r1,r1,#0 ;@ first clear V and C\n"); // ARM does not clear C if rot count is 0
     if (count<0)
     {
       if (dir) {
@@ -748,6 +749,7 @@ int OpAsr(int op)
   int ea=0,use=0;
   int count=0,dir=0;
   int size=0,usereg=0,type=0;
+  EaRWType eatype=earwt_shifted_up;
 
   count =(op>>9)&7;
   dir   =(op>>8)&1;
@@ -769,11 +771,27 @@ int OpAsr(int op)
 
   OpStart(op,ea,0,count<0); Cycles=size<2?6:8;
 
-  EaCalcRead(11,     0, ea,size,0x0007,earwt_shifted_up);
+  // logical/arithmetic
+  if (type<2) {
+    if (dir==0) eatype=type?earwt_zero_extend:earwt_sign_extend;
+    if (dir==1) eatype=type?earwt_msb_dont_care:earwt_shifted_up;
+  }
+  //Roxr/Roxl
+  if (type==2)
+    eatype=(dir^(size==0&&count==8))?earwt_msb_dont_care:earwt_zero_extend;
+  //Ror/Rol
+  if (type==3) eatype=earwt_zero_extend;
 
-  EmitAsr(op,type,dir,count, size,usereg);
+  EaCalcRead(11,     0, ea,size,0x0007,eatype);
 
-  EaWrite(11,    0, ea,size,0x0007,earwt_shifted_up);
+  EmitAsr(op,type,dir,count, size,usereg,eatype);
+
+  //Lsl/Asl result is shifted up
+  if (type<2 && dir==1) eatype=earwt_shifted_up;
+  //Ror/Rol result is mirrored across whole word
+  if (type==3) eatype=earwt_msb_dont_care;
+
+  EaWrite(11,    0, ea,size,0x0007,eatype);
 
   opend_op_changes_cycles = (count<0);
   OpEnd(ea,0);
@@ -785,6 +803,7 @@ int OpAsr(int op)
 int OpAsrEa(int op)
 {
   int use=0,type=0,dir=0,ea=0,size=1;
+  EaRWType eatype=earwt_shifted_up;
 
   type=(op>>9)&3;
   dir =(op>>8)&1;
@@ -800,11 +819,26 @@ int OpAsrEa(int op)
 
   OpStart(op,ea); Cycles=6; // EmitAsr() will add 2
 
-  EaCalcRead(11,     0,ea,size,0x003f,earwt_shifted_up);
+  // logical/arithmetic
+  if (type<2) {
+    if (dir==0) eatype=earwt_shifted_up;
+    if (dir==1) eatype=type?earwt_msb_dont_care:earwt_shifted_up;
+  }
+  //Ror/Rol
+  if (type==3) eatype=earwt_msb_dont_care;
 
-  EmitAsr(op,type,dir,1,size,0);
+  EaCalcRead(11,     0,ea,size,0x003f,eatype);
 
-  EaWrite(11,     0,ea,size,0x003f,earwt_shifted_up);
+  EmitAsr(op,type,dir,1,size,0,eatype);
+
+  //Lsr/Asr results are zero/sign extended
+  if (type<2 && dir==0) eatype=type?earwt_zero_extend:earwt_sign_extend;
+  //Lsl/Asl result is shifted up
+  if (type<2 && dir==1) eatype=earwt_shifted_up;
+  //Ror/Rol result is mirrored across whole word
+  if (type==3) eatype=earwt_shifted_up;
+
+  EaWrite(11,     0,ea,size,0x003f,eatype);
 
   OpEnd(ea);
   return 0;
