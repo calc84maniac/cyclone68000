@@ -80,6 +80,11 @@
 #define T2W ""
 #endif
 
+#if RELATIVE_JUMPTABLE
+#undef COMPRESS_JUMPTABLE
+#define COMPRESS_JUMPTABLE 0
+#endif
+
 // Disa.c
 #include "Disa/Disa.h"
 
@@ -134,6 +139,8 @@ int OpGetFlags(int subtract,int xbit,int sprecialz=0);
 void OpGetFlagsNZ(int rd);
 int SignExtend(int rd, int rs, int size, int prefer_nz=0);
 void ZeroExtend(int rd, int rs, int size);
+void OpFetchRelative(int step);
+void OpDispatch(const char *cond="");
 void OpUse(int op,int use);
 void OpStart(int op,int sea=0,int tea=0,int op_changes_cycles=0,int supervisor_check=0);
 void OpEnd(int sea=0,int tea=0);
