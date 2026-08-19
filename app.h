@@ -100,7 +100,7 @@ extern int g_pea_cycle_table[];
 extern int g_movem_cycle_table[];
 int Ea_add_ns(int *tab, int ea); // add nonstandard EA cycles
 int EaCalc(int a,int mask,int ea,int size,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0); // 7
-int EaRead(int a,int v,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0); // 8
+int EaRead(int a,int v,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0,int reversed=0); // 9
 int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0); // 8
 int EaCanRead(int ea,int size);
 int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int force_shift=0);
@@ -123,7 +123,7 @@ void ot(const char *format, ...)
 #endif
   ;
 void ltorg();
-int MemHandler(int type,int size,int addrreg=0,int need_addrerr_check=1);
+int MemHandler(int type,int size,int addrreg=0,int need_addrerr_check=1,int reversed=0);
 void CheckPc(int r_base,int r_ofs,int writeback=1,const char *s_ofs="");
 void FlushPC(int force=0);
 

@@ -173,6 +173,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
 {
   int lsl=0;
   char text[32]="";
+  const char *s=a<8?T2S:"";
 
   DisaPc=2; DisaGetEa(text,ea,size); // Get text version of the effective address
 
@@ -218,12 +219,12 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
 
     if ((ea&0x38)==0x18) // (An)+
     {
-      ot("  add r3,r%d,#%d ;@ Post-increment An\n",a,step);
+      ot("  add%s r3,r%d,#%d ;@ Post-increment An\n",s,a,step);
       strr=3;
     }
 
     if ((ea&0x38)==0x20) // -(An)
-      ot("  sub r%d,r%d,#%d ;@ Pre-decrement An\n",a,a,step);
+      ot("  sub%s r%d,r%d,#%d ;@ Pre-decrement An\n",s,a,a,step);
 
     if ((ea&0x38)==0x18||(ea&0x38)==0x20)
     {
@@ -249,7 +250,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
     lsl=EaCalcReg(2,8,mask,2,1);
     if (lsl>=0) ot("  ldr r2,[r7,r2,lsl #%i]\n",lsl);
     else        ot("  ldr r2,[r7,r2,lsr #%i]\n",-lsl);
-    ot("  add r%d,r0,r2 ;@ Add on offset\n",a);
+    ot("  add%s r%d,r0,r2 ;@ Add on offset\n",s,a);
     Cycles+=size<2 ? 8:12; // Extra cycles
     return 0;
   }
@@ -274,7 +275,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
     lsl=EaCalcReg(2,8,mask,2,1);
     if (lsl>=0) ot("  ldr r2,[r7,r2,lsl #%i]\n",lsl);
     else        ot("  ldr r2,[r7,r2,lsr #%i]\n",-lsl);
-    ot("  add r%d,r2,r3 ;@ r%d=Disp+An+Rn\n",a,a);
+    ot("  add%s r%d,r2,r3 ;@ r%d=Disp+An+Rn\n",s,a,a);
     Cycles+=size<2 ? 10:14; // Extra cycles
     return 0;
   }
@@ -303,9 +304,9 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
   if (ea==0x3a) // ($nn,PC) (pcdi)
   {
     ot("  ldr r0,[r7,#0x60] ;@ Get Memory base\n");
-    ot("  sub r0,r4,r0 ;@ Real PC\n");
+    ot("  sub%s r0,r4,r0 ;@ Real PC\n",T2S);
     ot("  ldrsh r2,[r4],#2 ;@ Fetch extension\n"); pc_dirty=1;
-    ot("  add r%d,r2,r0 ;@ ($nn,PC)\n",a);
+    ot("  add%s r%d,r2,r0 ;@ ($nn,PC)\n",s,a);
     Cycles+=size<2 ? 8:12; // Extra cycles
     return 0;
   }
@@ -314,8 +315,8 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
   {
     ot("  ldr r0,[r7,#0x60] ;@ Get Memory base\n");
     ot("  ldrh r3,[r4] ;@ Get extension word\n");
-    ot("  sub r0,r4,r0 ;@ r0=PC\n");
-    ot("  add r4,r4,#2\n"); pc_dirty=1;
+    ot("  sub%s r0,r4,r0 ;@ r0=PC\n",T2S);
+    ot("  add%s r4,r4,#2\n",T2S); pc_dirty=1;
     ot("  movs r2,r3,lsr #12 ;@ r2=Index of Rn, carry set if Long\n");
     ot("  ldr r2,[r7,r2,lsl #2] ;@ r2=Rn.l\n");
 #if HAVE_ARMv6
@@ -328,7 +329,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
     ot("  movcc r2,r2,asr #16\n");
     ot("  add r2,r2,r3,asr #24 ;@ r2=Disp+Rn\n");
 #endif
-    ot("  add r%d,r2,r0 ;@ r%d=Disp+PC+Rn\n",a,a);
+    ot("  add%s r%d,r2,r0 ;@ r%d=Disp+PC+Rn\n",s,a,a);
     Cycles+=size<2 ? 10:14; // Extra cycles
     return 0;
   }
@@ -362,10 +363,11 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
 // Read effective address in (ARM Register 'a') to ARM register 'v'
 // 'a' and 'v' can be anything but 0 is generally best (for both)
 // If (ea<0x10) nothing is trashed, else r0-r3,r12 is trashed
-int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int force_shift)
+int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int force_shift,int reversed)
 {
   char text[32]="";
   const char *s="";
+  const char *s_shift=(v<8 && (a<8 || ea!=0x3c)) ? T2S : "";
   int flags_set=0;
   int shift=0;
 
@@ -384,6 +386,7 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
       exit(1);
     }
     s="s";
+    s_shift="s";
   }
 
   shift=32-(8<<size);
@@ -409,7 +412,7 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
     else            ot("  ldr%s r%d,[r7,r%d]\n",suffix,v,a);
 
     if (type == earwt_shifted_up && shift)
-      ot("  mov%s r%d,r%d,asl #%d\n",s,v,v,shift);
+      ot("  mov%s r%d,r%d,asl #%d\n",s_shift,v,v,shift);
     else if (set_nz)
       ot("  tst r%d,r%d\n",v,v);
 
@@ -424,14 +427,14 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
 
     if (type == earwt_shifted_up) asl = shift;
 
-    if (asl)         ot("  mov%s r%d,r%d,asl #%d\n",s,v,a,asl);
+    if (asl)         ot("  mov%s r%d,r%d,asl #%d\n",s_shift,v,a,asl);
     else if (v!=a)   ot("  mov%s r%d,r%d\n",s,v,a);
     else if (set_nz) ot("  tst r%d,r%d\n",v,v);
     ot("\n"); return 0;
   }
 
-  if (ea>=0x3a && ea<=0x3b) MemHandler(2,size,a,earead_check_addrerr); // Fetch
-  else                      MemHandler(0,size,a,earead_check_addrerr); // Read
+  if (ea>=0x3a && ea<=0x3b) MemHandler(2,size,a,earead_check_addrerr,reversed); // Fetch
+  else                      MemHandler(0,size,a,earead_check_addrerr,reversed); // Read
 
   // defaults to 1, as most things begins with a read
   earead_check_addrerr=1;
@@ -447,7 +450,7 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
   else
   {
     if (type == earwt_shifted_up && shift) {
-      ot("  mov%s r%d,r0,asl #%d\n",s,v,shift);
+      ot("  mov%s r%d,r0,asl #%d\n",s_shift,v,shift);
       flags_set=1;
     }
     else if (v!=0) {
@@ -470,6 +473,8 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
 // r_ea is reg to store ea in (-1 means ea is not needed), r is dst reg
 int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz,int force_shift)
 {
+  int reversed=0;
+  int c_ea;
   if (ea<0x10)
   {
     if (r_ea==-1)
@@ -485,11 +490,16 @@ int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz,
   else
   {
     if (r_ea==-1) r_ea=0;
+#if MEMHANDLERS_ADDR_MASK == 0
+    // calculate the EA in r0, and move to r_ea before the memhandler call
+    reversed=1;
+#endif
   }
 
-  EaCalc (r_ea,mask,ea,size,type,set_nz,force_shift);
+  c_ea=reversed?0:r_ea;
+  EaCalc (c_ea,mask,ea,size,type,set_nz,force_shift);
   if (ea==0x3c&&size==2) set_nz=0; // already set
-  EaRead (r_ea,   r,ea,size,mask,type,set_nz,force_shift);
+  EaRead (r_ea,   r,ea,size,mask,type,set_nz,force_shift,reversed);
 
   return 0;
 }
@@ -518,6 +528,7 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
 {
   char text[32]="";
   int shift=0;
+  const char* s_shift=v<8?T2S:"";
 
   if(a == 1) { printf("Error! EaWrite a==1 !\n"); return 1; }
 
@@ -532,7 +543,7 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
     lsl=EaCalcReg(-1,ea,mask,2,noshift);
 
     ot(";@ EaWrite: r%d into register[r%d]:\n",v,a);
-    if (shift)  ot("  mov r%d,r%d,lsr #%d\n",v,v,shift);
+    if (shift)  ot("  mov%s r%d,r%d,lsr #%d\n",s_shift,v,v,shift);
 
     if      (lsl>0) ot("  str%s r%d,[r7,r%d,lsl #%i]\n",Narm[size&3],v,a,lsl);
     else if (lsl<0) ot("  str%s r%d,[r7,r%d,lsr #%i]\n",Narm[size&3],v,a,-lsl);
@@ -547,7 +558,7 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
 
   if (shift)
   {
-    ot("  mov r1,r%d,lsr #%d\n",v,shift);
+    ot("  mov%s r1,r%d,lsr #%d\n",s_shift,v,shift);
   }
   else if (type != earwt_zero_extend)
   {
