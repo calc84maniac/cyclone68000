@@ -119,6 +119,13 @@ static int EaCalcReg(int r,int ea,int mask,int shift,int noshift=0)
     if ((g_op>>low)&8) { needor=0; mask|=8<<low; } // Ah - no we don't actually need to or, since the bit is high in r8
   }
 
+#if USE_THUMB2
+  // Thumb-2 can't do right-shifted offsets, but on the other hand
+  // it can left-shift any access width, so always use the path
+  // which uses bitfield extract followed by a left-shifted offset.
+  noshift=1;
+#endif
+
 #if HAVE_ARMv6T2
   // Offset shifted left by 2 has reduced latency on some newer CPUs,
   // so noshift will use a shift of 0 via bitfield extract

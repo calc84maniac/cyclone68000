@@ -47,6 +47,16 @@
 /* #define HAVE_UNALIGNED_ACCESSES     0 */
 
 /*
+ * Enable this option to generate Thumb-2 compatible assembly.
+ * This option implicitly enables all architectures ARMv6T2 and below,
+ * as well as UAL syntax.
+ * Note: When using GNU as, the -mimplicit-it=always flag must be used.
+ */
+#ifndef USE_THUMB2
+#define USE_THUMB2                  0
+#endif
+
+/*
  * If this option is enabled, Microsoft ARMASM compatible output is generated
  * (output file -  Cyclone.asm). Otherwise GNU as syntax is used (Cyclone.s).
  */

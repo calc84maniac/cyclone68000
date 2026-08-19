@@ -1098,6 +1098,9 @@ static void PrintOpcodes()
   ot(";@ ---------------------------- Opcodes ---------------------------\n");
 
   // Emit null opcode:
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op____%s ;@ Called if an opcode is not recognised\n", ms?"":":");
 #if EMULATE_ADDRESS_ERRORS_JUMP || EMULATE_ADDRESS_ERRORS_IO
   ot("  ldr r1,[r7,#0x58]\n");
@@ -1123,6 +1126,9 @@ static void PrintOpcodes()
   OpEnd();
 
   // Unrecognised a-line and f-line opcodes throw an exception:
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op__al%s ;@ Unrecognised a-line opcode\n", ms?"":":");
   ot("  sub r4,r4,#2\n");
 #if USE_AFLINE_CALLBACK
@@ -1140,6 +1146,9 @@ static void PrintOpcodes()
   ot("\n");
   OpEnd();
 
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op__fl%s ;@ Unrecognised f-line opcode\n", ms?"":":");
   ot("  sub r4,r4,#2\n");
 #if USE_AFLINE_CALLBACK
@@ -1344,7 +1353,12 @@ static int CycloneMake()
 #if USE_UAL_SYNTAX && !USE_MS_SYNTAX
   ot("  .syntax unified\n");
 #endif
-  ot(ms?"  area |.text|, code, arm\n  arm\n":"  .text\n  .balign 4\n\n");
+#if USE_THUMB2
+  ot(ms?"  area |.text|, code, thumb\n  thumb\n":"  .text\n  .thumb\n  .balign 4\n");
+#else
+  ot(ms?"  area |.text|, code, arm\n  arm\n":"  .text\n  .arm\n  .balign 4\n\n");
+#endif
+  ot("\n");
   DeclareGlobalFunc("CycloneInitJT");
   DeclareGlobalFunc("CycloneResetJT");
   DeclareGlobalFunc("CycloneRun");
