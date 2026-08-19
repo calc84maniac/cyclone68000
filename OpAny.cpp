@@ -21,6 +21,44 @@ static unsigned short OpRead16(unsigned int a)
   return (unsigned short)( (OpData[a&15]<<8) | OpData[(a+1)&15] );
 }
 
+// Performs a relative jumptable fetch into r3, if applicable.
+// Should be called with steps 1 and 2 prior to calling OpDispatch().
+// Ideally, at least 1 instruction should be between steps 1 and 2.
+void OpFetchRelative(int step)
+{
+#if RELATIVE_JUMPTABLE
+ #if USE_THUMB2
+  if (step==1) ot("  ldrh r3,[r6,r8,asl #1] ;@ Load opcode handler offset\n");
+  if (step==2)
+  #if ALIGN_THUMB2_HANDLERS
+    ot("  sub r3,r6,r3,asl #2 ;@ Calculate jump target\n");
+  #else
+    ot("  sub r3,r6,r3,asl #1 ;@ Calculate jump target\n");
+  #endif
+ #else
+  if (step==1) {
+    ot("  add r3,r8,r8\n");
+    ot("  ldrh r3,[r6,r3] ;@ Load opcode handler offset\n");
+  }
+ #endif
+#endif
+}
+
+// Conditionally dispatches to an opcode after having fetched it,
+// including any applicable relative jumptable value in r3.
+void OpDispatch(const char *cond)
+{
+#if RELATIVE_JUMPTABLE
+ #if USE_THUMB2
+    ot("  mov%s pc,r3 ;@ Jump to next opcode handler\n",cond);
+ #else
+    ot("  sub%s pc,r6,r3,asl #2 ;@ Jump to next opcode handler\n",cond);
+ #endif
+#else
+    ot("  ldr%s pc,[r6,r8,asl #2] ;@ Jump to next opcode handler\n",cond);
+#endif
+}
+
 // For opcode 'op' use handler 'use'
 void OpUse(int op,int use)
 {
@@ -44,6 +82,9 @@ void OpStart(int op, int sea, int tea, int op_changes_cycles, int supervisor_che
 
   Cycles=0;
   OpUse(op,op); // This opcode obviously uses this handler
+#if USE_THUMB2 && ALIGN_THUMB2_HANDLERS
+  ot(ms?"  align 4\n":"  .balign 4\n");
+#endif
 #if USE_THUMB2 && !USE_MS_SYNTAX
   ot("  .thumb_func\n");
 #endif
@@ -111,28 +152,38 @@ void OpEnd(int sea, int tea)
   if (opend_check_trace)
   {
     ot(";@ CheckTrace:\n");
-    ot("  tst r1,#0x80\n");
-    ot("  bne CycloneDoTraceWithChecks\n");
+    ot("  movs r0,r1,lsr #8\n");
+    ot("  bcs CycloneDoTraceWithChecks\n");
     ot("  cmp r5,#0\n");
   }
+  OpFetchRelative(1);
   if (opend_check_interrupt)
   {
     ot("  ble CycloneEnd\n");
     ot(";@ CheckInterrupt:\n");
     if (!opend_check_trace)
       ot("  ldr r1,[r7,#0x44]\n");
+    OpFetchRelative(2);
     ot("  movs r0,r1,lsr #24 ;@ Get IRQ level\n"); // same as  ldrb r0,[r7,#0x47]
-    ot("  ldreq pc,[r6,r8,asl #2] ;@ Jump to next opcode handler\n");
+    OpDispatch("eq");
     ot("  cmp r0,#6 ;@ irq>6 ?\n");
     ot("  andle r1,r1,#7 ;@ Get interrupt mask\n");
     ot("  cmple r0,r1 ;@ irq<=6: Is irq<=mask ?\n");
-    ot("  ldrle pc,[r6,r8,asl #2] ;@ Jump to next opcode handler\n");
+    OpDispatch("le");
     ot("  b CycloneDoInterruptGoBack\n");
   }
   else
   {
-    ot("  ldrgt pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+#if RELATIVE_JUMPTABLE && USE_THUMB2
+    // Place branch in interlock, allowing an IT instruction to be dropped
+    ot("  ble CycloneEnd\n");
+    OpFetchRelative(2);
+    OpDispatch();
+#else
+    OpFetchRelative(2);
+    OpDispatch("gt");
     ot("  b CycloneEnd\n");
+#endif
   }
   ot("\n");
 }

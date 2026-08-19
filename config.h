@@ -91,6 +91,26 @@
 #define COMPRESS_JUMPTABLE          1
 
 /*
+ * This option reduces the runtime memory footprint of Cyclone's jumptable,
+ * at a cost to code size and performance. The jumptable will be placed in
+ * the text section, allowing it to be loaded in read-only memory (e.g. Flash).
+ * It takes only half the amount of space (128 KiB) and uses no relocations. 
+ * This option disables COMPRESS_JUMPTABLE because of the read-only attribute.
+ * Note: If using Thumb-2 output, this option will not work if the total size
+ * of Cyclone's opcode handlers exceeds 128 KiB, unless ALIGN_THUMB2_HANDLERS
+ * is enabled, which expands the usable range to 256 KiB.
+ */
+#define RELATIVE_JUMPTABLE          0
+
+/*
+ * If enabled, all Thumb-2 opcode handlers are 4-byte aligned.
+ * This can improve performance due to pipeline refill behavior, and also
+ * expands the maximum usable code size when using RELATIVE_JUMPTABLE.
+ * Disable this option to reduce the size of Cyclone's .text section.
+ */
+#define ALIGN_THUMB2_HANDLERS       1
+
+/*
  * If enabled, inlines unrolled division in each DIVU/DIVS opcode handler.
  * Saves 2 branches per divide, but costs ~1.3k instructions.
  */

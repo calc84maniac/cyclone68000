@@ -261,7 +261,9 @@ static void PrintFramework()
   ot("  ldr r0,[r7,#0x58] ;@ state_flags\n");
   ot("  ldrh r8,[r4],#2 ;@ Fetch first opcode\n");
   ot("  tst r0,#0x%02x ;@ special state?\n", state_flags_to_check);
-  ot("  ldreq pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+  OpFetchRelative(1);
+  OpFetchRelative(2);
+  OpDispatch("eq");
   ot("\n");
   ot("CycloneSpecial%s\n", ms?"":":");
 #if EMULATE_TRACE
@@ -343,6 +345,8 @@ static void PrintFramework()
   ot("  bgt unc_fill4\n");
   ot("  ldmfd sp!,{r7,pc}\n");
   ltorg();
+#elif RELATIVE_JUMPTABLE
+  ot("  bx lr\n");
 #else
   ot(";@ fix final jumptable entries\n");
   ot("  add r0,r0,#0x10000*4\n");
@@ -702,7 +706,7 @@ static void PrintFramework()
  #endif
 #endif
   ot("  tst r3,r3\n");
-  ot("  streqb r3,[r7,#0x47] ;@ just clear IRQ if there is no callback\n");
+  ot(UAL(str,b,eq) "r3,[r7,#0x47] ;@ just clear IRQ if there is no callback\n");
 #if USE_FDPIC_ABI
   ot("  ldmneia r3,{r3,r9} ;@ load FDPIC descriptor\n");
 #endif
@@ -947,7 +951,9 @@ static void PrintFramework()
   ot("  ldr r6,[r7,#0x54]\n");
   ot("  ldrh r8,[r4],#2 ;@ Fetch next opcode\n");
   ot("  subs r5,r5,#50 ;@ Subtract cycles\n");
-  ot("  ldrgt pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+  OpFetchRelative(1);
+  OpFetchRelative(2);
+  OpDispatch("gt");
   ot("  b CycloneEnd\n");
   ot("\n");
 #endif
@@ -973,12 +979,14 @@ static void PrintFramework()
   // expects next opcode to be already fetched to r8
   ot("CycloneDoTrace%s\n", ms?"":":");
   ot("  str r5,[r7,#0x9c] ;@ save cycles\n");
+  OpFetchRelative(1);
   ot("  ldr r1,[r7,#0x98]\n");
   ot("  mov%s r5,#0\n",T2S);
   ot("  str r1,[r7,#0xa0]\n");
+  OpFetchRelative(2);
   ot("  adr r0,TraceEnd\n");
   ot("  str r0,[r7,#0x98] ;@ store TraceEnd as CycloneEnd hadler\n");
-  ot("  ldr pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+  OpDispatch();
   ot("\n");
 
   ot("TraceEnd%s\n", ms?"":":");
@@ -1000,13 +1008,17 @@ static void PrintFramework()
   ot("  bl Exception\n");
   ot("  ldrh r8,[r4],#2 ;@ Fetch next opcode\n");
   ot("  subs r5,r5,#34 ;@ Subtract cycles\n");
-  ot("  ldrgt pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+  OpFetchRelative(1);
+  OpFetchRelative(2);
+  OpDispatch("gt");
   ot("  b CycloneEnd\n");
   ot("\n");
   ot("TraceDisabled%s\n", ms?"":":");
   ot("  ldrh r8,[r4],#2 ;@ Fetch next opcode\n");
   ot("  cmp r5,#0\n");
-  ot("  ldrgt pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+  OpFetchRelative(1);
+  OpFetchRelative(2);
+  OpDispatch("gt");
   ot("  b CycloneEnd\n");
   ot("\n");
 #endif
@@ -1175,6 +1187,9 @@ static void PrintOpcodes()
   ot(";@ ---------------------------- Opcodes ---------------------------\n");
 
   // Emit null opcode:
+#if USE_THUMB2 && ALIGN_THUMB2_HANDLERS
+  ot(ms?"  align 4\n":"  .balign 4\n");
+#endif
 #if USE_THUMB2 && !USE_MS_SYNTAX
   ot("  .thumb_func\n");
 #endif
@@ -1203,6 +1218,9 @@ static void PrintOpcodes()
   OpEnd();
 
   // Unrecognised a-line and f-line opcodes throw an exception:
+#if USE_THUMB2 && ALIGN_THUMB2_HANDLERS
+  ot(ms?"  align 4\n":"  .balign 4\n");
+#endif
 #if USE_THUMB2 && !USE_MS_SYNTAX
   ot("  .thumb_func\n");
 #endif
@@ -1223,6 +1241,9 @@ static void PrintOpcodes()
   ot("\n");
   OpEnd();
 
+#if USE_THUMB2 && ALIGN_THUMB2_HANDLERS
+  ot(ms?"  align 4\n":"  .balign 4\n");
+#endif
 #if USE_THUMB2 && !USE_MS_SYNTAX
   ot("  .thumb_func\n");
 #endif
@@ -1275,11 +1296,20 @@ static void ott(const char *str, int par, const char *nl, int nlp, int counter, 
 static void PrintJumpTable()
 {
   int i=0,op=0,len=0;
+#if RELATIVE_JUMPTABLE
+  int sh=0;
+  const char *fmt="";
+#endif
 
   ot(";@ -------------------------- Jump Table --------------------------\n");
 
+#if RELATIVE_JUMPTABLE
+  // align table in .text section immediately following handlers
+  ot(ms?"  align 4\n":"  .balign 4\n");
+#else
   // space for decompressed table
   ot(ms?"  area |.data|, data\n":"  .data\n  .balign 4\n\n");
+#endif
 
 #if COMPRESS_JUMPTABLE
     int handlers=0,reps=0,*indexes,ip,u,out;
@@ -1323,7 +1353,7 @@ static void PrintJumpTable()
     } else {
       ot(ms?"":"  .rept 0x%x\n  .long 0,0,0,0,0,0,0,0\n  .endr\n", (0x4000-handlers)/8);
     }
-    printf("total distinct hanlers: %i\n",handlers);
+    printf("total distinct handlers: %i\n",handlers);
     // output data
     for(i=0,ip=0; i < 0xf000; i++, ip++) {
       op=CyJump[i];
@@ -1359,6 +1389,27 @@ static void PrintJumpTable()
     }
     ot("\n");
     free(indexes);
+#elif RELATIVE_JUMPTABLE
+    ot("CycloneJumpTab%s\n", ms?"":":");
+    len=0x10000; // No relocations, so no COFF object bug
+#if USE_THUMB2 && !ALIGN_THUMB2_HANDLERS
+    sh=1;
+    fmt="(CycloneJumpTab+1-Op%.4x)>>1";
+#else
+    sh=2;
+    fmt="(CycloneJumpTab+1-Op%.4x)>>2";
+#endif
+
+    for (i=0;i<len;i++)
+    {
+      op=CyJump[i];
+           if(op>=0)  ott(fmt,                            op," ;@ %.4x\n",i-7,i,1);
+      else if(op==-2) ott("(CycloneJumpTab+1-Op__al)>>%d",sh," ;@ %.4x\n",i-7,i,1);
+      else if(op==-3) ott("(CycloneJumpTab+1-Op__fl)>>%d",sh," ;@ %.4x\n",i-7,i,1);
+      else            ott("(CycloneJumpTab+1-Op____)>>%d",sh," ;@ %.4x\n",i-7,i,1);
+    }
+    if(i&7) fseek(AsmFile, -1, SEEK_CUR); // remove last comma
+    ot("\n");
 #else
     ot("CycloneJumpTab%s\n", ms?"":":");
     len=0xfffe; // Hmmm, armasm 2.50.8684 messes up with a 0x10000 long jump table
