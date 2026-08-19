@@ -99,7 +99,7 @@ static void EmitBtst(int type,int mem)
   } else if (type) {
     ot("  movs r2,r2,lsl #27 ;@ reg - do mod 32\n"); // size always 2
     ot("  submi r5,r5,#2 ;@ extra cycles\n");
-    ot("  mov r2,r2,lsr #27\n");
+    ot("  mov%s r2,r2,lsr #27\n",T2S);
     ot("\n");
   }
 
@@ -115,16 +115,16 @@ static void EmitBtst(int type,int mem)
   {
     const char *shift="";
 #if HAVE_ARMv6T2
-    ot("  mov r1,#1\n");
+    ot("  mov%s r1,#1\n",T2S);
 #endif
 #if USE_THUMB2
     ot("  movs r1,r1,lsl r2\n");
 #else
     shift=",lsl r2";
 #endif
-    if (type==1) ot("  eor r1,r0,r1%s ;@ Toggle bit\n",shift);
+    if (type==1) ot("  eor%s r1,r0,r1%s ;@ Toggle bit\n",T2S,shift);
     if (type==2) ot("  bic r1,r0,r1%s ;@ Clear bit\n",shift);
-    if (type==3) ot("  orr r1,r0,r1%s ;@ Set bit\n",shift);
+    if (type==3) ot("  orr%s r1,r0,r1%s ;@ Set bit\n",T2S,shift);
     ot("\n");
   }
 
@@ -293,7 +293,7 @@ int OpNeg(int op)
       ot("  movs r1,r1,lsr #%i\n",size?16:24);
       ot("  orreq r10,r10,#0x40000000 ;@ possily missed Z\n");
     }
-    ot("  andeq r10,r10,r3 ;@ fix Z\n");
+    ot("  and r10,r10,r3 ;@ fix Z\n");
     ot("\n");
     wtype=earwt_zero_extend;
   }
@@ -301,7 +301,7 @@ int OpNeg(int op)
   if (type==1)
   {
     ot(";@ Clear:\n");
-    ot("  mov r1,#0\n");
+    ot("  mov%s r1,#0\n",T2S);
     ot("  mov r10,#0x40000000 ;@ NZCV=0100\n");
     ot("\n");
     wtype=earwt_zero_extend;
@@ -310,7 +310,7 @@ int OpNeg(int op)
   if (type==2)
   {
     ot(";@ Neg:\n");
-    if(size!=2) ot("  mov r0,r0,asl #%i\n",size?16:24);
+    if(size!=2) ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
     ot("  rsbs r1,r0,#0\n");
     OpGetFlags(1,1);
     wtype=earwt_shifted_up;
@@ -324,7 +324,7 @@ int OpNeg(int op)
     wtype=earwt_sign_extend;
 #else
     if(size!=2) {
-      ot("  mov r0,r0,asl #%i\n",size?16:24);
+      ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
       ot("  mvns r1,r0,asr #%i\n",size?16:24);
     }
     else
@@ -355,8 +355,7 @@ int OpSwap(int op)
 
   OpStart(op); Cycles=4;
 
-  EaCalc (11,0x0007,ea,2,earwt_shifted_up);
-  EaRead (11,     0,ea,2,0x0007,earwt_shifted_up);
+  EaCalcRead (11,     0,ea,2,0x0007,earwt_shifted_up);
 
   ot("  movs r1,r0,ror #16\n");
   OpGetFlagsNZ(1);
@@ -386,8 +385,7 @@ int OpTst(int op)
 
   OpStart(op,sea); Cycles=4;
 
-  EaCalc (0,0x003f,sea,size,earwt_shifted_up);
-  EaRead (0,     0,sea,size,0x003f,earwt_shifted_up,1);
+  EaCalcRead(-1,     0,sea,size,0x003f,earwt_shifted_up,1);
 
   OpGetFlagsNZ(0);
   ot("\n");
@@ -448,14 +446,14 @@ int OpSet(int op)
   switch (cc)
   {
     case 0x00: // T
-      ot("  mov r1,#0xff\n"); // size is always 0
+      ot("  mov%s r1,#0xff\n",T2S); // size is always 0
       if (ea<8) Cycles+=2;
       break;
     case 0x01: // F
-      ot("  mov r1,#0x00\n");
+      ot("  mov%s r1,#0x00\n",T2S);
       break;
     default:
-      ot("  mov r1,#0x00\n");
+      ot("  mov%s r1,#0x00\n",T2S);
       cond=TestCond(cc);
       ot("  mov%s r1,#0xff\n",cond); // size is always 0
       if (ea<8) ot("  sub%s r5,r5,#2 ;@ Extra cycles\n",cond);
@@ -520,8 +518,8 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
     if (shift && (dir^(eatype==earwt_shifted_up))) {
       if (usereg||count<0||asl||(dir&&(count+shift==32))) {
         // register-based shifts, Asl, or Lsl by a total of 32 require pre-shift
-        if (type==0) ot("  mov r0,r0,%s #%d\n",dir?"asl":"asr",shift);
-        if (type==1) ot("  mov r0,r0,%s #%d\n",dir?"lsl":"lsr",shift);
+        if (type==0) ot("  mov%s r0,r0,%s #%d\n",T2S,dir?"asl":"asr",shift);
+        if (type==1) ot("  mov%s r0,r0,%s #%d\n",T2S,dir?"lsl":"lsr",shift);
       } else {
         // otherwise, combine the shift with the pre-shift
         sprintf(pct,"#%d",count+shift);
@@ -561,7 +559,7 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
       }
       else
 #endif
-      ot("  cmp r3,r0,asr %s\n", pct);
+        ot("  cmp r3,r0,asr %s\n", pct);
       ot("  orrne r10,r10,#0x10000000\n");
       ot("\n");
     }
@@ -596,7 +594,7 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
       } else {
         if (size!=2) {
           if (eatype!=earwt_shifted_up)
-            ot("  mov r0,r0,lsl #%i\n",shift);
+            ot("  mov%s r0,r0,lsl #%i\n",T2S,shift);
           ot("  and r2,r2,#0x20000000 ;@ Isolate X bit\n");
           ot("  adds r0,r0,r2,lsr #29-%d ;@ Clear V flag\n",31-wide);
           ot("  movs r0,r0,lsl #1\n");
@@ -608,7 +606,7 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
         if (size==2) ot("  bic r10,r10,#0x10000000 ;@ make sure V is clear\n");
       }
       if (size!=2 && eatype!=earwt_shifted_up)
-        ot("  mov r0,r0,lsr #%d\n",shift);
+        ot("  mov%s r0,r0,lsr #%d\n",T2S,shift);
       return 0;
     }
 
@@ -637,7 +635,7 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
     else if (!shift)
       ot("  adds r1,r1,#0 ;@ clear V flag\n");
 
-    if (dir&&shift) ot("  mov r0,r0,lsl #%d ;@ shift value to upper bits\n",shift);
+    if (dir&&shift) ot("  mov%s r0,r0,lsl #%d ;@ shift value to upper bits\n",T2S,shift);
     ot("\n");
 
     ot(";@ Rotate bits:\n");
@@ -645,7 +643,7 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
     if (dir) ot("  mov r3,r0,rrx ;@ Rotate X bit into reverse part\n");
     else     ot("  adc r3,r0,r0 ;@ Rotate X bit into reverse part, preserve V flag\n");
 
-    if (shift) ot("  mov r0,r0,%s %s ;@ Shift forward part\n",sh_fwd,pct);
+    if (shift) ot("  mov%s r0,r0,%s %s ;@ Shift forward part\n",T2S,sh_fwd,pct);
     else       ot("  movs r0,r0,%s %s ;@ Shift forward part, set C flag\n",sh_fwd,pct);
 
 #if USE_THUMB2
@@ -868,8 +866,7 @@ int OpTas(int op, int gen_special)
   Cycles=4;
   if(ea>=8) Cycles+=6;
 
-  EaCalc (11,0x003f,ea,0,earwt_shifted_up);
-  EaRead (11,     1,ea,0,0x003f,earwt_shifted_up,1);
+  EaCalcRead (11,     1,ea,0,0x003f,earwt_shifted_up,1);
 
   OpGetFlagsNZ(1);
   ot("\n");

@@ -19,6 +19,8 @@
 // if writeback is disabled, the direct return value from checkpc() is in r0
 void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
 {
+  const char *s = (r_base<8 && r_ofs<8 && s_ofs[0]=='\0') ? T2S : "";
+
   if (r_base<0) {
     ot("  ldr r2,[r7,#0x60] ;@ Get Memory base\n");
     r_base=2;
@@ -27,7 +29,7 @@ void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
 #if USE_CHECKPC_CALLBACK
   ot(";@ Check Memory Base+pc\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
-  ot("  add r0,r%d,r%d%s ;@ r0 = New PC\n",r_base,r_ofs,s_ofs);
+  ot("  add%s r0,r%d,r%d%s ;@ r0 = New PC\n",s,r_base,r_ofs,s_ofs);
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
  #else
   #if HAVE_ARMv4_ARM9
@@ -36,7 +38,7 @@ void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
   #if !HAVE_ARMv5
   ot("  add lr,pc,#4\n");
   #endif
-  ot("  add r0,r%d,r%d%s ;@ r0 = New PC\n",r_base,r_ofs,s_ofs);
+  ot("  add%s r0,r%d,r%d%s ;@ r0 = New PC\n",s,r_base,r_ofs,s_ofs);
   #if HAVE_ARMv5
   ot("  blx r3 ;@ Call checkpc()\n");
   #elif HAVE_ARMv4_ARM9
@@ -53,7 +55,7 @@ void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
  #endif
 #else
   int r_out=writeback?4:0;
-  ot("  add r%d,r%d,r%d%s ;@ r%d = New PC\n",r_out,r_base,r_ofs,s_ofs,r_out);
+  ot("  add%s r%d,r%d,r%d%s ;@ r%d = New PC\n",s,r_out,r_base,r_ofs,s_ofs,r_out);
  #if !EMULATE_ADDRESS_ERRORS_JUMP
   if (writeback) ot("  bic r4,r4,#1\n");
  #endif
@@ -66,7 +68,7 @@ void OpPush32()
 {
   ot(";@ Push r1 onto stack\n");
   ot("  ldr r0,[r7,#0x3c]\n");
-  ot("  sub r0,r0,#4 ;@ Predecrement A7\n");
+  ot("  sub%s r0,r0,#4 ;@ Predecrement A7\n",T2S);
   ot("  str r0,[r7,#0x3c] ;@ Save A7\n");
   MemHandler(1,2);
   ot("\n");
@@ -78,7 +80,7 @@ void OpPushSr(int high)
   ot(";@ Push SR:\n");
   OpFlagsToReg(high);
   ot("  ldr r0,[r7,#0x3c]\n");
-  ot("  sub r0,r0,#2 ;@ Predecrement A7\n");
+  ot("  sub%s r0,r0,#2 ;@ Predecrement A7\n",T2S);
   ot("  str r0,[r7,#0x3c] ;@ Save A7\n");
   MemHandler(1,1);
   ot("\n");
@@ -89,7 +91,7 @@ static void PopSr(int high)
 {
   ot(";@ Pop SR:\n");
   ot("  ldr r0,[r7,#0x3c]\n");
-  ot("  add r1,r0,#2 ;@ Postincrement A7\n");
+  ot("  add%s r1,r0,#2 ;@ Postincrement A7\n",T2S);
   ot("  str r1,[r7,#0x3c] ;@ Save A7\n");
   MemHandler(0,1);
   ot("\n");
@@ -101,7 +103,7 @@ static void PopPc()
 {
   ot(";@ Pop PC:\n");
   ot("  ldr r0,[r7,#0x3c]\n");
-  ot("  add r1,r0,#4 ;@ Postincrement A7\n");
+  ot("  add%s r1,r0,#4 ;@ Postincrement A7\n",T2S);
   ot("  str r1,[r7,#0x3c] ;@ Save A7\n");
   MemHandler(0,2);
   CheckPc(-1,0);
@@ -116,7 +118,7 @@ int OpTrap(int op)
 
   OpStart(op,0x10);
   ot("  and r0,r8,#0xf ;@ Get trap number\n");
-  ot("  orr r0,r0,#0x20 ;@ 32+n\n");
+  ot("  add%s r0,r0,#0x20 ;@ 32+n\n",T2S);
   ot("  bl Exception\n");
   ot("\n");
 
@@ -139,14 +141,13 @@ int OpLink(int op)
 
   if(reg!=7) {
     ot(";@ Get An\n");
-    EaCalc(11, 7, 8, 2);
-    EaRead(11, 1, 8, 2, 7);
+    EaCalcRead(11, 1, 8, 2, 7);
     ot("  ldr r0,[r7,#0x3c] ;@ Get A7\n");
-    ot("  sub r0,r0,#4 ;@ A7-=4\n");
+    ot("  sub%s r0,r0,#4 ;@ A7-=4\n",T2S);
   }
   else {
     ot("  ldr r1,[r7,#0x3c] ;@ Get A7\n");
-    ot("  sub r0,r1,#4 ;@ A7-=4\n");
+    ot("  sub%s r0,r1,#4 ;@ A7-=4\n",T2S);
   }
   ot("  mov r8,r0 ;@ abuse r8\n");
   ot("\n");
@@ -159,8 +160,7 @@ int OpLink(int op)
     EaWrite(11, 8, 8, 2, 7);
 
   ot(";@ Get offset:\n");
-  EaCalc(0,0,0x3c,1);    // abused r8 is ok because of imm EA
-  EaRead(0,0,0x3c,1,0);
+  EaCalcRead(-1,0,0x3c,1,0); // abused r8 is ok because of imm EA
 
   ot("  add r8,r8,r0 ;@ Add offset to A7\n");
   ot("  str r8,[r7,#0x3c]\n");
@@ -182,8 +182,7 @@ int OpUnlk(int op)
   OpStart(op,0x10);
 
   ot(";@ Get An\n");
-  EaCalc(11, 0xf, 8, 2);
-  EaRead(11,   0, 8, 2, 0xf);
+  EaCalcRead(11,   0, 8, 2, 0xf);
 
   ot("  add r8,r0,#4 ;@ A7+=4, abuse r8\n");
   ot("\n");
@@ -228,8 +227,8 @@ int Op4E70(int op)
     ot("  str r1,[r7,#0x58]\n");
 #endif
 #if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
+    ot("  movs r0,r4,lsr #1 ;@ address error?\n");
+    ot("  bcs ExceptionAddressError_r_prg_r4\n");
 #endif
     opend_check_interrupt = 1;
     opend_check_trace = 1;
@@ -240,8 +239,8 @@ int Op4E70(int op)
     OpStart(op,0x10); Cycles=16;
     PopPc();
 #if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
+    ot("  movs r0,r4,lsr #1 ;@ address error?\n");
+    ot("  bcs ExceptionAddressError_r_prg_r4\n");
 #endif
     OpEnd(0x10);
     return 0;
@@ -261,8 +260,8 @@ int Op4E70(int op)
     PopSr(0);
     PopPc();
 #if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
+    ot("  movs r0,r4,lsr #1 ;@ address error?\n");
+    ot("  bcs ExceptionAddressError_r_prg_r4\n");
 #endif
     OpEnd(0x10);
     return 0;
@@ -291,10 +290,10 @@ int OpJsr(int op)
 
   ot("  ldr r11,[r7,#0x60] ;@ Get Memory base\n");
   ot("\n");
-  EaCalc(12,0x003f,sea,0);
+  EaCalc(0,0x003f,sea,0);
 
   ot(";@ Jump - Get new PC from r12\n");
-  CheckPc(11,12,0);
+  CheckPc(11,0,0);
   if (!(op&0x40))
   {
     ot("  ldr r2,[r7,#0x3c]\n");
@@ -304,8 +303,8 @@ int OpJsr(int op)
   // jsr prefetches next instruction before pushing old PC,
   // according to http://pasti.fxatari.com/68kdocs/68kPrefetch.html
   ot("  mov r4,r0\n");
-  ot("  tst r4,#1 ;@ address error?\n");
-  ot("  bne ExceptionAddressError_r_prg_r4\n");
+  ot("  movs r0,r4,lsr #1 ;@ address error?\n");
+  ot("  bcs ExceptionAddressError_r_prg_r4\n");
 #else
   ot("  bic r4,r0,#1\n");
 #endif
@@ -313,7 +312,7 @@ int OpJsr(int op)
   if (!(op&0x40))
   {
     ot(";@ Push old PC onto stack\n");
-    ot("  sub r0,r2,#4 ;@ Predecrement A7\n");
+    ot("  sub%s r0,r2,#4 ;@ Predecrement A7\n",T2S);
     ot("  str r0,[r7,#0x3c] ;@ Save A7\n");
     MemHandler(1,2);
   }
@@ -360,34 +359,40 @@ int OpDbra(int op)
   {
     ot(";@ Decrement Dn.w\n");
     ot("  and r1,r8,#0x0007\n");
+#if USE_THUMB2
+    ot("  ldrsh r0,[r7,r1,lsl #2]\n");
+#else
     ot("  mov r1,r1,lsl #2\n");
     ot("  ldrsh r0,[r7,r1]\n");
+#endif
     ot("  strb r8,[r7,#0x45] ;@ not polling\n");
-    ot("  sub r0,r0,#1\n");
+    ot("  subs r0,r0,#1\n");
+#if USE_THUMB2
+    ot("  strh r0,[r7,r1,lsl #2]\n");
+#else
     ot("  strh r0,[r7,r1]\n");
+#endif
     ot("\n");
 
     ot(";@ Check if Dn.w is -1\n");
-    ot("  cmn r0,#1\n");
-
 #if (USE_CHECKPC_CALLBACK && USE_CHECKPC_DBRA) || EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  beq DbraMin1\n");
+    ot("  blo DbraMin1\n");
     ot("\n");
 
     ot(";@ Get Branch offset:\n");
     ot("  ldrsh r0,[r4]\n");
     CheckPc(4,0);
 #if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
+    ot("  movs r0,r4,lsr #1 ;@ address error?\n");
+    ot("  bcs ExceptionAddressError_r_prg_r4\n");
 #endif
 #else
     ot("\n");
     ot(";@ Get Branch offset:\n");
-    ot("  ldrnesh r0,[r4]\n");
-    ot("  addeq r4,r4,#2 ;@ Skip branch offset\n");
-    ot("  subeq r5,r5,#4 ;@ additional cycles\n");
-    ot("  addne r4,r4,r0 ;@ r4 = New PC\n");
+    ot(UAL(ldr,sh,hs) "r0,[r4]\n");
+    ot("  addlo r4,r4,#2 ;@ Skip branch offset\n");
+    ot("  sublo r5,r5,#4 ;@ additional cycles\n");
+    ot("  addhs r4,r4,r0 ;@ r4 = New PC\n");
     ot("  bic r4,r4,#1\n"); // we do not emulate address errors
     ot("\n");
 #endif
@@ -400,7 +405,7 @@ int OpDbra(int op)
   {
     ot(";@ condition true:\n");
     ot("DbraTrue%s\n", ms?"":":");
-    ot("  add r4,r4,#2 ;@ Skip branch offset\n");
+    ot("  add%s r4,r4,#2 ;@ Skip branch offset\n",T2S);
     ot("\n");
     Cycles=12;
     OpEnd();
@@ -411,7 +416,7 @@ int OpDbra(int op)
   {
     ot(";@ Dn.w is -1:\n");
     ot("DbraMin1%s\n", ms?"":":");
-    ot("  add r4,r4,#2 ;@ Skip branch offset\n");
+    ot("  add%s r4,r4,#2 ;@ Skip branch offset\n",T2S);
     ot("\n");
     Cycles=12+2;
     OpEnd();
@@ -431,6 +436,7 @@ int OpBranch(int op)
   const char *shift="";
   const char *cond;
   int pc_reg=0;
+  int ofs_reg=0;
 
   offset=(char)(op&0xff);
   cc=(op>>8)&15;
@@ -447,6 +453,8 @@ int OpBranch(int op)
   OpStart(op,size?0x10:0);
   Cycles=10; // Assume branch taken
 
+  if (cc==1) ofs_reg=11; // callee-save for Bsr push 
+
   if (cc>=2)
   {
     cond=TestCond(cc,1);
@@ -457,26 +465,26 @@ int OpBranch(int op)
   {
     if (size<2)
     {
-      ot("  ldrsh r11,[r4] ;@ Fetch Branch offset\n");
+      ot("  ldrsh r%d,[r4] ;@ Fetch Branch offset\n",ofs_reg);
     }
     else
     {
 #if HAVE_UNALIGNED_ACCESSES
-      ot("  ldr r11,[r4] ;@ Fetch Branch offset (unaligned)\n");
+      ot("  ldr r%d,[r4] ;@ Fetch Branch offset (unaligned)\n",ofs_reg);
       shift=",ror #16";
 #else
       ot("  ldrh r2,[r4] ;@ Fetch Branch offset\n");
-      ot("  ldrh r11,[r4,#2]\n");
-      ot("  orr r11,r11,r2,lsl #16\n");
+      ot("  ldrh r%d,[r4,#2]\n",ofs_reg);
+      ot("  orr r%d,r%d,r2,lsl #16\n",ofs_reg,ofs_reg);
 #endif
     }
   }
   else
   {
 #if HAVE_ARMv6
-    SignExtend(11,8,0);
+    SignExtend(ofs_reg,8,0);
 #else
-    ot("  mov r11,r8,asl #24 ;@ Shift 8-bit signed offset up...\n\n");
+    ot("  mov r%d,r8,asl #24 ;@ Shift 8-bit signed offset up...\n\n",ofs_reg);
     shift=",asr #24";
 #endif
   }
@@ -486,13 +494,13 @@ int OpBranch(int op)
   if (cc==1)
   {
     ot(";@ Bsr - remember old PC\n");
-    ot("  ldr r12,[r7,#0x60] ;@ Get Memory base\n");
+    ot("  ldr r3,[r7,#0x60] ;@ Get Memory base\n");
     ot("  ldr r2,[r7,#0x3c]\n");
-    ot("  sub r1,r4,r12 ;@ r1 = Old PC\n");
-    if (size) ot("  add r1,r1,#%d\n",1<<size);
+    ot("  sub%s r1,r4,r3 ;@ r1 = Old PC\n",T2S);
+    if (size) ot("  add%s r1,r1,#%d\n",T2S,1<<size);
     ot("\n");
     ot(";@ Push r1 onto stack\n");
-    ot("  sub r0,r2,#4 ;@ Predecrement A7\n");
+    ot("  sub%s r0,r2,#4 ;@ Predecrement A7\n",T2S);
     ot("  str r0,[r7,#0x3c] ;@ Save A7\n");
     MemHandler(1,2);
     ot("\n");
@@ -510,12 +518,12 @@ int OpBranch(int op)
 #endif
   if (checkpc)
   {
-    CheckPc(4,11,0,shift);
+    CheckPc(4,ofs_reg,0,shift);
     pc_reg=0;
   }
   else
   {
-    ot("  add r4,r4,r11%s ;@ r4 = New PC\n",shift);
+    ot("  add r4,r4,r%d%s ;@ r4 = New PC\n",ofs_reg,shift);
     pc_reg=4;
   }
 
@@ -529,8 +537,8 @@ int OpBranch(int op)
     }
     if (size)
     {
-      ot("  tst r4,#1 ;@ address error?\n");
-      ot("  bne ExceptionAddressError_r_prg_r4\n");
+      ot("  movs r0,r4,lsr #1 ;@ address error?\n");
+      ot("  bcs ExceptionAddressError_r_prg_r4\n");
     }
     else
     {
@@ -551,7 +559,7 @@ int OpBranch(int op)
   if (cc>=2&&(op&0xff01)==0x6700)
   {
     ot("BccDontBranch%i%s\n", 8<<size, ms?"":":");
-    if (size) ot("  add r4,r4,#%d\n",1<<size);
+    if (size) ot("  add%s r4,r4,#%d\n",T2S,1<<size);
     Cycles+=(size==1) ? 2 : -2; // Branch not taken
     OpEnd(0);
   }

@@ -16,11 +16,11 @@
 // trashes r0,r2
 void OpFlagsToReg(int high)
 {
-  ot("  ldr r0,[r7,#0x4c]   ;@ X bit\n");
-  ot("  mov r1,r10,lsr #28  ;@ ____NZCV\n");
-  ot("  eor r2,r1,r1,ror #1 ;@ Bit 0=C^V\n");
-  ot("  tst r2,#1           ;@ 1 if C!=V\n");
-  ot("  eorne r1,r1,#3      ;@ ____NZVC\n");
+  ot("  ldr r0,[r7,#0x4c]    ;@ X bit\n");
+  ot("  mov r1,r10,lsr #28   ;@ ____NZCV\n");
+  ot("  mvn%s r2,r1            ;@ Invert CV bits\n",T2S);
+  ot("  movs r2,r2,lsl #31   ;@ Set carry to !C, sign to !V\n");
+  ot("  adc r1,r1,r2,asr #31 ;@ ____NZVC\n");
   ot("\n");
   if (high) ot("  ldrb r2,[r7,#0x44]  ;@ Include SR high\n");
   ot("  and r0,r0,#0x20000000\n");
@@ -33,17 +33,17 @@ void OpFlagsToReg(int high)
 // trashes r0,r1
 void OpRegToFlags(int high, int srh_reg)
 {
-  ot("  eor r1,r0,r0,ror #1 ;@ Bit 0=C^V\n");
-  ot("  mov r2,r0,lsl #25\n");
-  ot("  tst r1,#1           ;@ 1 if C!=V\n");
-  ot("  eorne r0,r0,#3      ;@ ___XNZCV\n");
-  ot("  str r2,[r7,#0x4c]   ;@ Store X bit\n");
-  ot("  mov r10,r0,lsl #28  ;@ r10=NZCV...\n");
+  ot("  mvn%s r1,r0            ;@ Invert VC bits\n",T2S);
+  ot("  mov%s r2,r0,lsl #25\n",T2S);
+  ot("  movs r1,r1,lsl #31   ;@ Set carry to !V, sign to !C\n");
+  ot("  adc r0,r0,r1,asr #31 ;@ ___XNZCV\n");
+  ot("  str r2,[r7,#0x4c]    ;@ Store X bit\n");
+  ot("  mov r10,r0,lsl #28   ;@ r10=NZCV...\n");
 
   if (high)
   {
     int mask=EMULATE_TRACE?0xa7:0x27;
-    ot("  mov r%i,r0,ror #8\n",srh_reg);
+    ot("  mov%s r%i,r0,lsr #8\n",T2S,srh_reg);
     ot("  and r%i,r%i,#0x%02x ;@ only take defined bits\n",srh_reg,srh_reg,mask);
     ot("  strb r%i,[r7,#0x44] ;@ Store SR high\n",srh_reg);
   }
@@ -57,13 +57,13 @@ void SuperEnd(void)
   ot("WrongPrivilegeMode%s\n",ms?"":":");
 #if EMULATE_ADDRESS_ERRORS_JUMP || EMULATE_ADDRESS_ERRORS_IO
   ot("  ldr r1,[r7,#0x58]\n");
-  ot("  sub r4,r4,#2 ;@ last opcode wasn't executed - go back\n");
+  ot("  sub%s r4,r4,#2 ;@ last opcode wasn't executed - go back\n",T2S);
   ot("  orr r1,r1,#4 ;@ set activity bit: 'not processing instruction'\n");
   ot("  str r1,[r7,#0x58]\n");
 #else
-  ot("  sub r4,r4,#2 ;@ last opcode wasn't executed - go back\n");
+  ot("  sub%s r4,r4,#2 ;@ last opcode wasn't executed - go back\n",T2S);
 #endif
-  ot("  mov r0,#8 ;@ privilege violation\n");
+  ot("  mov%s r0,#8 ;@ privilege violation\n",T2S);
   ot("  bl Exception\n");
   Cycles=34;
   OpEnd(0);
@@ -80,8 +80,8 @@ void SuperChange(int op,int srh_reg)
     srh_reg=0;
   }
   ot("  eor r0,r%i,r11\n",srh_reg);
-  ot("  tst r0,#0x20\n");
-  ot("  beq no_sp_swap%.4x\n",op);
+  ot("  movs r0,r0,lsr #6 ;@ bit 0x20 into carry\n");
+  ot("  bcc no_sp_swap%.4x\n",op);
   ot(" ;@ swap OSP and A7:\n");
   ot("  ldr r11,[r7,#0x3C] ;@ Get A7\n");
   ot("  ldr r0, [r7,#0x48] ;@ Get OSP\n");
@@ -297,10 +297,10 @@ int OpArithSr(int op)
 
   EaCalcRead(-1,0,ea,size,0x003f,earwt_sign_extend);
 
-  ot("  eor r1,r0,r0,ror #1 ;@ Bit 0=C^V\n");
-  ot("  tst r1,#1           ;@ 1 if C!=V\n");
-  ot("  eorne r0,r0,#3      ;@ ___XNZCV\n");
-  ot("  ldr r2,[r7,#0x4c]   ;@ Load old X bit\n");
+  ot("  mvn%s r1,r0            ;@ Invert VC bits\n",T2S);
+  ot("  movs r1,r1,lsl #31   ;@ Set carry to !V, sign to !C\n");
+  ot("  adc r0,r0,r1,asr #31 ;@ ___XNZCV\n");
+  ot("  ldr r2,[r7,#0x4c] ;@ Load old X bit\n");
 
   // note: old srh is already in r11 (done by OpStart)
   if (type==0) {
@@ -414,7 +414,7 @@ int OpMovem(int op)
 
   ot(";@ r4=Register Pointer:\n");
   if (decr) ot("  add r4,r7,#0x40 ;@ order reversed for -(An)\n");
-  else      ot("  sub r4,r7,#4\n");
+  else      ot("  sub%s r4,r7,#4\n",T2S);
   
   ot("\n");
   ot("  tst r11,r11\n");        // sanity check
@@ -422,19 +422,29 @@ int OpMovem(int op)
 
 #if EMULATE_ADDRESS_ERRORS_IO
   ot("\n");
-  ot("  tst r6,#1 ;@ address error?\n");
-  ot("  movne r0,r6\n");
-  ot("  bne ExceptionAddressError_%c_data\n",dir?'r':'w');
+  ot("  movs r0,r6,lsr #1 ;@ address error?\n");
+  ot("  mov r0,r6\n");
+  ot("  bcs ExceptionAddressError_%c_data\n",dir?'r':'w');
 #endif
 
   ot("\n");
+#if HAVE_ARMv6T2
+  ot("  rbit r11,r11\n");
+  ot("Movemloop%.4x%s\n",op, ms?"":":");
+  ot("  clz r0,r11\n");
+  ot("  add%s r0,r0,#1\n",T2S);
+  if (decr) ot("  sub r4,r4,r0,lsl #2 ;@ r4=Next Register\n");
+  else      ot("  add r4,r4,r0,lsl #2 ;@ r4=Next Register\n");
+  ot("  mov r11,r11,lsl r0\n");
+#else
   ot("Movemloop%.4x%s\n",op, ms?"":":");
   ot("  add r4,r4,#%d ;@ r4=Next Register\n",decr?-4:4);
   ot("  movs r11,r11,lsr #1\n");
   ot("  bcc Movemloop%.4x\n",op);
+#endif
   ot("\n");
 
-  if (decr) ot("  sub r6,r6,#%d ;@ Pre-decrement address\n",1<<size);
+  if (decr) ot("  sub%s r6,r6,#%d ;@ Pre-decrement address\n",T2S,1<<size);
 
   if (dir)
   {
@@ -449,7 +459,7 @@ int OpMovem(int op)
 #if SPLIT_MOVEL_PD
     if (decr && size==2) { // -(An)
       ot("  ldrh r1,[r4] ;@ Load value from lower half of Dn/An\n");
-      ot("  add r0,r6,#2\n");
+      ot("  add%s r0,r6,#2\n",T2S);
       EaWrite(0,1,ea,1,0x003f,earwt_zero_extend);
       ot("  ldrh r1,[r4,#2] ;@ Load value from upper half of Dn/An\n");
       EaWrite(6,1,ea,1,0x003f,earwt_zero_extend);
@@ -462,9 +472,9 @@ int OpMovem(int op)
     }
   }
 
-  if (decr==0) ot("  add r6,r6,#%d ;@ Post-increment address\n",1<<size);
+  if (decr==0) ot("  add%s r6,r6,#%d ;@ Post-increment address\n",T2S,1<<size);
 
-  ot("  sub r5,r5,#%d ;@ Take some cycles\n",2<<size);
+  ot("  sub%s r5,r5,#%d ;@ Take some cycles\n",T2S,2<<size);
   ot("  tst r11,r11\n");
   ot("  bne Movemloop%.4x\n",op);
   ot("\n");
@@ -520,8 +530,7 @@ int OpMoveUsp(int op)
   }
   else
   {
-    EaCalc (0,0x000f,8,2);
-    EaRead (0,     0,8,2,0x000f);
+    EaCalcRead(-1,0,8,2,0x000f);
     ot("  str r0,[r7,#0x48] ;@ Put in USP\n\n");
   }
     
@@ -668,21 +677,21 @@ int OpMovep(int op)
 #endif
     if (size==2) { // if operand is long
       EaCalcRead(6,11,ea,0,0x000f,earwt_shifted_up); // read first byte
-      ot("  add r0,r6,#2\n");
+      ot("  add%s r0,r6,#2\n",T2S);
       EaRead(0,0,ea,0,0x000f,rtype); // read second byte
 #if HAVE_ARMv6T2
       ot("  bfi r11,r0,#16,#8\n");
 #else
       ot("  orr r11,r11,r0,lsl #16\n");
 #endif
-      ot("  add r0,r6,#4\n");
+      ot("  add%s r0,r6,#4\n",T2S);
       EaRead(0,0,ea,0,0x000f,rtype); // read third byte
 #if HAVE_ARMv6T2
       ot("  bfi r11,r0,#8,#8\n");
 #else
       ot("  orr r11,r11,r0,lsl #8\n");
 #endif
-      ot("  add r0,r6,#6\n");
+      ot("  add%s r0,r6,#6\n",T2S);
       EaRead(0,0,ea,0,0x000f,rtype); // read fourth byte
 #if HAVE_ARMv6T2
       ot("  bfi r11,r0,#0,#8\n");
@@ -692,7 +701,7 @@ int OpMovep(int op)
       r_out=11;
     } else {
       EaCalcRead(6,11,ea,0,0x000f,earwt_msb_dont_care); // read first byte
-      ot("  add r0,r6,#2\n");
+      ot("  add%s r0,r6,#2\n",T2S);
       EaRead(0,0,ea,0,0x000f,rtype); // read second byte
 #if HAVE_ARMv6T2
       ot("  bfi r0,r11,#8,#8\n");
@@ -729,7 +738,7 @@ int OpStopReset(int op)
     ot("\n");
 
     ot("  ldr r0,[r7,#0x58]\n");
-    ot("  mov r5,#0 ;@ eat cycles\n");
+    ot("  mov%s r5,#0 ;@ eat cycles\n",T2S);
     ot("  orr r0,r0,#1 ;@ stopped\n");
     ot("  str r0,[r7,#0x58]\n");
     ot("\n");

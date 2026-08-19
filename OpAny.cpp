@@ -94,7 +94,7 @@ void OpEnd(int sea, int tea)
     {
       ot("  ldr r0,[r7,#0x5c] ;@ Load Cycles\n");
       ot("  ldrh r8,[r4],#2 ;@ Fetch next opcode\n");
-      ot("  add r5,r0,r5\n");
+      ot("  add r5,r5,r0\n");
       did_fetch=1;
     }
     else
@@ -171,29 +171,41 @@ int OpGetFlags(int subtract,int xbit,int specialz)
 
 void OpGetFlagsNZ(int rd)
 {
+#if USE_THUMB2
+  // Reduce code bloat by avoiding an IT instruction,
+  // since Thumb-2 only platforms tend to have cheap MRS
+  ot("  mrs r10,apsr ;@ r10=flags\n");
+  ot("  and r10,r10,#0xc0000000 ;@ get NZ, clear CV\n");
+#else
   ot("  and r10,r%d,#0x80000000 ;@ r10=N_flag\n",rd);
   ot("  orreq r10,r10,#0x40000000 ;@ get NZ, clear CV\n");
+#endif
   flags_in_reg=1;
 }
 
 // size 0=8bit, 1=16bit
-void SignExtend(int rd, int rs, int size)
+// returns 1 if NZ flags were set as preferred
+int SignExtend(int rd, int rs, int size, int prefer_nz)
 {
+  const char *s = prefer_nz?"s":"";
   if (size >= 2)
   {
-    if (rd != rs)
-      ot("  mov r%d,r%d\n", rd, rs);
-    return;
+    if (rd == rs)
+      return 0;
+    ot("  mov%s r%d,r%d\n", s, rd, rs);
+    return prefer_nz;
   }
 #if HAVE_ARMv6
   if (size == 1)
     ot("  sxth r%d,r%d ;@ sign extend\n", rd, rs);
   else
     ot("  sxtb r%d,r%d ;@ sign extend\n", rd, rs);
+  return 0;
 #else
   int shift = size ? 16 : 24;
   ot("  mov r%d,r%d,asl #%d\n", rd, rs, shift);
-  ot("  mov r%d,r%d,asr #%d ;@ sign extend\n", rd, rd, shift);
+  ot("  mov%s r%d,r%d,asr #%d ;@ sign extend\n", s, rd, rd, shift);
+  return prefer_nz;
 #endif
 }
 
