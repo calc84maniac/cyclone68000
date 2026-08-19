@@ -44,6 +44,9 @@ void OpStart(int op, int sea, int tea, int op_changes_cycles, int supervisor_che
 
   Cycles=0;
   OpUse(op,op); // This opcode obviously uses this handler
+#if USE_THUMB2 && !USE_MS_SYNTAX
+  ot("  .thumb_func\n");
+#endif
   ot("Op%.4x%s\n", op, ms?"":":");
 
   if (supervisor_check)
@@ -206,6 +209,7 @@ void ZeroExtend(int rd, int rs, int size)
   if (size == 1)
     ot("  uxth r%d,r%d ;@ zero extend\n", rd, rs);
   else
+    ot("  uxtb r%d,r%d ;@ zero extend\n", rd, rs);
 #else
   if (size == 1)
   {
@@ -213,10 +217,10 @@ void ZeroExtend(int rd, int rs, int size)
     ot("  mov r%d,r%d,lsr #16 ;@ zero extend\n", rd, rd);
   }
   else
-#endif
   {
     ot("  and r%d,r%d,#0xff ;@ zero extend\n", rd, rs);
   }
+#endif
 }
 
 // -----------------------------------------------------------------

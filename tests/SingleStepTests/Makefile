@@ -1,3 +1,7 @@
+ifeq ($(USE_THUMB2),1)
+ARCH = armv6t2
+CPU = cortex-a7 # don't use cortex-m because we're using arm-linux-gnueabi libs
+else
 ifeq ($(HAVE_ARMv6T2),1)
 ARCH = armv6t2
 CPU = cortex-a7 # arm1156 not supported in qemu...
@@ -15,9 +19,10 @@ CPU = arm946 # arm920 not supported in qemu...
 endif
 endif
 endif
+endif
 
 AS = arm-linux-gnueabi-as
-ASFLAGS += -march=$(ARCH) -mfloat-abi=soft
+ASFLAGS += -march=$(ARCH) -mfloat-abi=soft -mimplicit-it=always
 CXX = arm-linux-gnueabi-g++
 CFLAGS += -march=$(ARCH) -mfloat-abi=soft -Wall -ggdb -O2
 CXXFLAGS += $(CFLAGS)

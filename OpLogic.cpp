@@ -113,17 +113,28 @@ static void EmitBtst(int type,int mem)
 
   if (type>0)
   {
+    const char *shift="";
 #if HAVE_ARMv6T2
     ot("  mov r1,#1\n");
 #endif
-    if (type==1) ot("  eor r1,r0,r1,lsl r2 ;@ Toggle bit\n");
-    if (type==2) ot("  bic r1,r0,r1,lsl r2 ;@ Clear bit\n");
-    if (type==3) ot("  orr r1,r0,r1,lsl r2 ;@ Set bit\n");
+#if USE_THUMB2
+    ot("  movs r1,r1,lsl r2\n");
+#else
+    shift=",lsl r2";
+#endif
+    if (type==1) ot("  eor r1,r0,r1%s ;@ Toggle bit\n",shift);
+    if (type==2) ot("  bic r1,r0,r1%s ;@ Clear bit\n",shift);
+    if (type==3) ot("  orr r1,r0,r1%s ;@ Set bit\n",shift);
     ot("\n");
   }
 
 #if HAVE_ARMv6T2
+ #if USE_THUMB2
+  ot("  movs r0,r0,ror r2 ;@ Shift to bit 0 and invert\n");
+  ot("  mvns r0,r0\n");
+ #else
   ot("  mvn r0,r0,ror r2 ;@ Shift to bit 0 and invert\n");
+ #endif
   ot("  bfi r10,r0,#30,#1 ;@ Replace Z flag\n");
   ot("\n");
 #endif
@@ -271,11 +282,13 @@ int OpNeg(int op)
   if (type==0)
   {
     ot(";@ Negx:\n");
-    GetXBit(1);
-    if(size!=2) ot("  mov r0,r0,asl #%i\n",size?16:24);
-    ot("  rscs r1,r0,#0 ;@ do arithmetic\n");
+    ot("  ldr r2,[r7,#0x4c] ;@ X bit\n");
+    if(size!=2) ot("  mov%s r0,r0,asl #%i\n",T2S,size?16:24);
+    ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
+    ot("  sbcs r1,r0,#0 ;@ do arithmetic\n");
+    ot("  mvns r1,r1\n");
     ot("  orr r3,r10,#0xb0000000 ;@ for old Z\n");
-    OpGetFlags(1,1,0);
+    OpGetFlags(0,1,0);
     if(size!=2) {
       ot("  movs r1,r1,lsr #%i\n",size?16:24);
       ot("  orreq r10,r10,#0x40000000 ;@ possily missed Z\n");
@@ -541,6 +554,13 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
 
     if (asl&&count!=1) {
       ot(";@ calculate V flag (set if sign bit changes at anytime):\n");
+#if USE_THUMB2
+      if (pct[0]=='r') {
+        ot("  mov r2,r0,asr %s\n", pct);
+        ot("  cmp r3,r2\n");
+      }
+      else
+#endif
       ot("  cmp r3,r0,asr %s\n", pct);
       ot("  orrne r10,r10,#0x10000000\n");
       ot("\n");
@@ -628,8 +648,16 @@ static int EmitAsr(int op,int type,int dir,int count,int size,int usereg,EaRWTyp
     if (shift) ot("  mov r0,r0,%s %s ;@ Shift forward part\n",sh_fwd,pct);
     else       ot("  movs r0,r0,%s %s ;@ Shift forward part, set C flag\n",sh_fwd,pct);
 
-    if (shift) ot("  adds r0,r0,r3,%s %s ;@ Add reverse part, clear V flag\n",sh_rev,pct_rev);
-    else       ot("  orrs r0,r0,r3,%s %s ;@ Orr reverse part, set flags\n",sh_rev,pct_rev);
+#if USE_THUMB2
+    if (pct_rev[0]=='r') {
+      ot("  movs r3,r3,%s %s ;@ Shift reverse part and X bit, set C flag\n",sh_rev,pct_rev);
+      if (shift) ot("  adds r0,r0,r3 ;@ Add both parts, clear V flag\n");
+      else       ot("  orrs r0,r0,r3 ;@ Orr both parts, set NZ flags\n");
+    }
+    else
+#endif
+      if (shift) ot("  adds r0,r0,r3,%s %s ;@ Add reverse part, clear V flag\n",sh_rev,pct_rev);
+      else       ot("  orrs r0,r0,r3,%s %s ;@ Orr reverse part, set flags\n",sh_rev,pct_rev);
     ot("\n");
 
     if (shift&& dir) ot("  movs r0,r0,asr #%d ;@ Shift down and get correct NC flags\n",shift);

@@ -102,7 +102,7 @@ int Ea_add_ns(int *tab, int ea)
 // ---------------------------------------------------------------------------
 // Gets the offset of a register for an ea, and puts it in 'r'
 // Shifted left by 'shift'
-// Doesn't trash anything
+// Doesn't trash anything (except flags on Thumb-2)
 static int EaCalcReg(int r,int ea,int mask,int forceor,int shift,int noshift=0)
 {
   int i=0,low=0,needor=0;
@@ -118,6 +118,18 @@ static int EaCalcReg(int r,int ea,int mask,int forceor,int shift,int noshift=0)
     if (forceor) needor=1; // Special case for 0x30-0x38 EAs ;)
   }
 
+#if USE_THUMB2
+  // Thumb-2 can't do right-shifted offsets, but on the other hand
+  // it can left-shift any access width. So, always use bitfield
+  // extract along with left-shift by 2.
+  (void)shift;
+  (void)noshift;
+  mask>>=low;
+  if (needor) mask&=~8; // Exclude bit 3 so we can add instead of or
+  for (i=mask; i!=0; i>>=1) lsl++;
+  ot("  ubfx r%d,r8,#%d,#%d\n",r,low,lsl);
+  if (needor) ot("  adds r%d,r%d,#8 ;@ A0-7\n",r,r);
+#else
   ot("  and r%d,r8,#0x%.4x\n",r,mask);
   if (needor) ot("  orr r%d,r%d,#0x%x ;@ A0-7\n",r,r,8<<low);
 
@@ -130,6 +142,7 @@ static int EaCalcReg(int r,int ea,int mask,int forceor,int shift,int noshift=0)
     if (lsl>0) ot("lsl #%d\n", lsl);
     else       ot("lsr #%d\n",-lsl);
   }
+#endif
 
   return 0;
 }
@@ -181,8 +194,12 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
     else
     {
       EaCalcReg(2,ea,mask,0,0,1);
+#if USE_THUMB2
+      (void)i;
+#else
       if(mask)
         for (i=mask|0x8000; (i&1)==0; i>>=1) low++; // Find out how high up the EA mask is
+#endif
       lsl=2-low; // Having a lsl #x here saves one opcode
       if      (lsl>=0) ot("  ldr r%d,[r7,r2,lsl #%i]\n",a,lsl);
       else if (lsl<0)  ot("  ldr r%d,[r7,r2,lsr #%i]\n",a,-lsl);
@@ -363,11 +380,19 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
   if (ea<0x10)
   {
     int lsl=0,low=0,nsarm=size&3,i;
+    const char *suffix;
+#if USE_THUMB2
+    (void)force_shift;
+    (void)low;
+    (void)i;
+    lsl=2;
+#else
     if (!force_shift && (size >= 2 || (size == 0 && type != earwt_sign_extend))) {
       if (mask)
         for (i=mask|0x8000; (i&1)==0; i>>=1) low++; // Find out how high up the EA mask is
       lsl=2-low; // Having a lsl #2 here saves one opcode
     }
+#endif
 
     if (type == earwt_shifted_up || type == earwt_msb_dont_care)
       // use plain ldr
@@ -375,9 +400,10 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
 
     ot(";@ EaRead : Read register[r%d] into r%d:\n",a,v);
 
-    if      (lsl>0) ot("  ldr%s r%d,[r7,r%d,lsl #%i]\n",Narm[nsarm],v,a,lsl);
-    else if (lsl<0) ot("  ldr%s r%d,[r7,r%d,lsr #%i]\n",Narm[nsarm],v,a,-lsl);
-    else            ot("  ldr%s r%d,[r7,r%d]\n",type==earwt_sign_extend?Sarm[nsarm]:Narm[nsarm],v,a);
+    suffix = type==earwt_sign_extend?Sarm[nsarm]:Narm[nsarm];
+    if      (lsl>0) ot("  ldr%s r%d,[r7,r%d,lsl #%i]\n",suffix,v,a,lsl);
+    else if (lsl<0) ot("  ldr%s r%d,[r7,r%d,lsr #%i]\n",suffix,v,a,-lsl);
+    else            ot("  ldr%s r%d,[r7,r%d]\n",suffix,v,a);
 
     if (type == earwt_shifted_up && shift)
       ot("  mov%s r%d,r%d,asl #%d\n",s,v,v,shift);
@@ -508,11 +534,18 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
   if (ea<0x10)
   {
     int lsl=0,low=0,i;
+#if USE_THUMB2
+    (void)force_shift;
+    (void)low;
+    (void)i;
+    lsl=2;
+#else
     if (!force_shift && (size >= 2 || (size == 0 && type != earwt_sign_extend))) {
       if(mask)
         for (i=mask|0x8000; (i&1)==0; i>>=1) low++; // Find out how high up the EA mask is
       lsl=2-low; // Having a lsl #x here saves one opcode
     }
+#endif
 
     ot(";@ EaWrite: r%d into register[r%d]:\n",v,a);
     if (shift)  ot("  mov r%d,r%d,lsr #%d\n",v,v,shift);
