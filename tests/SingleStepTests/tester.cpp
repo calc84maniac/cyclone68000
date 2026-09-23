@@ -28,6 +28,8 @@ struct TestStats
 static constexpr unsigned int MEM_SIZE = 0x1000000;
 static constexpr unsigned int DIRTY_PAGE_SIZE = 0x1000;
 
+static bool test_address_errors = false;
+
 static struct Cyclone cpu;
 static struct Cyclone final_cpu;
 
@@ -39,7 +41,7 @@ static uint8_t memory_dirty[MEM_SIZE / DIRTY_PAGE_SIZE];
 extern "C" unsigned int cyclone_checkpc(unsigned int pc)
 {
     pc -= cpu.membase;
-    unsigned int pc_addr = (unsigned int)&memory[pc & (MEM_SIZE - 2)];
+    unsigned int pc_addr = (unsigned int)&memory[pc & (MEM_SIZE - 1)];
     // preserve the upper 8 bits of PC in the membase
     cpu.membase = pc_addr - pc;
     return pc_addr;
@@ -334,7 +336,7 @@ static bool run_test(FILE* test_file, TestStatus& status, bool& show_failure)
     bool has_error;
     if (!read_transactions(test_file, cycles, has_error)) return false;
 
-    if (has_error)
+    if (!test_address_errors && has_error)
     {
         status = TestStatus::Skipped;
         return true;
@@ -546,8 +548,21 @@ bool div_iter_tests()
     return success;
 }
 
-int main()
+int main(int argc, char **argv)
 {
+    if (argc >= 2)
+    {
+        if (argc == 2 && strcmp(argv[1], "--address-errors") == 0)
+        {
+            test_address_errors = true;
+        }
+        else
+        {
+            printf("Usage: %s [--address-errors]\n", argv[0]);
+            return EXIT_FAILURE;
+        }
+    }
+
     cpu.checkpc = cyclone_checkpc;
     cpu.read8 = cyclone_read8;
     cpu.read16 = cyclone_read16;

@@ -31,7 +31,7 @@ OBJS = tester.o Cyclone.o
 all: cyclone tester
 
 test: cyclone tester
-	$(EMU) tester
+	$(EMU) tester --address-errors
 
 clean:
 	$(RM) $(OBJS) tester

@@ -73,6 +73,7 @@ enum EaRWType {
 
 extern int earead_check_addrerr;
 extern int eawrite_check_addrerr;
+extern int ea_access_index;
 extern int g_jmp_cycle_table[];
 extern int g_jsr_cycle_table[];
 extern int g_lea_cycle_table[];
@@ -103,8 +104,8 @@ void ot(const char *format, ...)
 #endif
   ;
 void ltorg();
-int MemHandler(int type,int size,int addrreg=0,int need_addrerr_check=1);
-void CheckPc(int r_base,int r_ofs,int writeback=1,const char *s_ofs="");
+int MemHandler(int type,int size,int addrreg=0,int need_addrerr_check=1,int ea=0);
+void CheckPc(int r_base,int r_ofs,int writeback=1,int chkerr=0,const char *s_ofs="");
 void FlushPC(int force=0);
 
 // OpAny.cpp

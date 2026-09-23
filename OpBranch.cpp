@@ -17,7 +17,7 @@
 // if base is passed as -1, it is auto-loaded and offset must not be r2
 // by default, out-address is in r4 and bit 0 cleared if errors are not emulated
 // if writeback is disabled, the direct return value from checkpc() is in r0
-void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
+void CheckPc(int r_base,int r_ofs,int writeback,int chkerr,const char *s_ofs)
 {
   if (r_base<0) {
     ot("  ldr r2,[r7,#0x60] ;@ Get Memory base\n");
@@ -28,15 +28,29 @@ void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
   ot(";@ Check Memory Base+pc\n");
  #ifdef MEMHANDLERS_DIRECT_PREFIX
   ot("  add r0,r%d,r%d%s ;@ r0 = New PC\n",r_base,r_ofs,s_ofs);
+#if EMULATE_ADDRESS_ERRORS_JUMP
+  ot("  tst r0,#1 ;@ address error?\n");  
+  ot("  bne ExceptionAddressError_r_prg_jmp\n");
+#endif
   ot("  bl %scheckpc ;@ Call checkpc()\n", MEMHANDLERS_DIRECT_PREFIX);
  #else
   #if HAVE_ARMv4_ARM9
   ot("  ldr r3,[r7,#0x64] ;@ checkpc handler\n");
   #endif
   #if !HAVE_ARMv5
+   #if EMULATE_ADDRESS_ERRORS_JUMP
+  if (chkerr) ot("  add lr,pc,#12\n");
+  else
+   #endif
   ot("  add lr,pc,#4\n");
   #endif
   ot("  add r0,r%d,r%d%s ;@ r0 = New PC\n",r_base,r_ofs,s_ofs);
+  #if EMULATE_ADDRESS_ERRORS_JUMP
+  if (chkerr) {
+    ot("  tst r0,#1 ;@ address error?\n");
+    ot("  bne ExceptionAddressError_r_prg_jmp\n");
+  }
+  #endif
   #if HAVE_ARMv5
   ot("  blx r3 ;@ Call checkpc()\n");
   #elif HAVE_ARMv4_ARM9
@@ -53,8 +67,17 @@ void CheckPc(int r_base,int r_ofs,int writeback,const char *s_ofs)
  #endif
 #else
   int r_out=writeback?4:0;
+ #if EMULATE_ADDRESS_ERRORS_JUMP
+  if (chkerr) r_out=0;
+ #endif
   ot("  add r%d,r%d,r%d%s ;@ r%d = New PC\n",r_out,r_base,r_ofs,s_ofs,r_out);
- #if !EMULATE_ADDRESS_ERRORS_JUMP
+ #if EMULATE_ADDRESS_ERRORS_JUMP
+  if (chkerr) {
+    ot("  tst r0,#1 ;@ address error?\n");
+    ot("  bne ExceptionAddressError_r_prg_jmp\n");
+    if (writeback) ot("  mov r4,r0\n");
+  }
+ #else
   if (writeback) ot("  bic r4,r4,#1\n");
  #endif
 #endif
@@ -97,14 +120,14 @@ static void PopSr(int high)
 }
 
 // Pop PC - trashes r0-r3
-static void PopPc()
+static void PopPc(int checkpc=1)
 {
   ot(";@ Pop PC:\n");
   ot("  ldr r0,[r7,#0x3c]\n");
   ot("  add r1,r0,#4 ;@ Postincrement A7\n");
   ot("  str r1,[r7,#0x3c] ;@ Save A7\n");
   MemHandler(0,2);
-  CheckPc(-1,0);
+  if (checkpc) CheckPc(-1,0,1,1);
 }
 
 int OpTrap(int op)
@@ -180,17 +203,30 @@ int OpUnlk(int op)
   OpStart(op,0x10);
 
   ot(";@ Get An\n");
+#if EMULATE_ADDRESS_ERRORS_IO
+  EaCalcRead(-1, 0, 8, 2, 0xf);
+  ot("  add r4,r4,#2 ;@ Prefetch for address error\n");
+  ot("  add r11,r0,#4 ;@ A7+=4\n");
+#else
   EaCalcRead(11, 0, 8, 2, 0xf);
-
   ot("  add r8,r0,#4 ;@ A7+=4, abuse r8\n");
+#endif
   ot("\n");
   ot(";@ Pop An from stack:\n");
   MemHandler(0,2);
   ot("\n");
+#if EMULATE_ADDRESS_ERRORS_IO
+  ot("  sub r4,r4,#2 ;@ Undo prefetch\n");
+  ot("  str r11,[r7,#0x3c] ;@ Save A7\n");
+#else
   ot("  str r8,[r7,#0x3c] ;@ Save A7\n");
+#endif
   ot("\n");
   ot(";@ An = value from stack:\n");
-  EaWrite(11, 0, 8, 2, 7);
+#if EMULATE_ADDRESS_ERRORS_IO
+  EaCalc(11, 0xf, 8, 2);
+#endif
+  EaWrite(11, 0, 8, 2, 0xf);
 
   Cycles=12;
   OpEnd(0x10);
@@ -216,7 +252,7 @@ int Op4E70(int op)
     case 3: // rte
     OpStart(op,0x10,0,0,1); Cycles=20;
     PopSr(1);
-    PopPc();
+    PopPc(0);
     ot("  ldr r1,[r7,#0x44] ;@ reload SR high\n");
     SuperChange(op,1);
 #if EMULATE_ADDRESS_ERRORS_JUMP || EMULATE_ADDRESS_ERRORS_IO || EMULATE_HALT
@@ -224,10 +260,7 @@ int Op4E70(int op)
     ot("  bic r1,r1,#0x0c ;@ clear 'not processing instruction' and 'doing addr error' bits\n");
     ot("  str r1,[r7,#0x58]\n");
 #endif
-#if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
-#endif
+    CheckPc(-1,0,1,1);
     opend_check_interrupt = 1;
     opend_check_trace = 1;
     OpEnd(0x10,0);
@@ -236,10 +269,6 @@ int Op4E70(int op)
     case 5: // rts
     OpStart(op,0x10); Cycles=16;
     PopPc();
-#if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
-#endif
     OpEnd(0x10);
     return 0;
 
@@ -257,10 +286,6 @@ int Op4E70(int op)
     OpStart(op,0x10); Cycles=20;
     PopSr(0);
     PopPc();
-#if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
-#endif
     OpEnd(0x10);
     return 0;
 
@@ -286,25 +311,30 @@ int OpJsr(int op)
 
   OpStart(op,(op&0x40)?0:0x10);
 
+#if EMULATE_ADDRESS_ERRORS_JUMP
+  if (op&0x40) ot("  mov r11,r4\n");
+#endif
+  EaCalc(0,0x003f,sea,0);
+#if EMULATE_ADDRESS_ERRORS_JUMP
+  if (op&0x40) ot("  mov r4,r11\n");
+#endif
   ot("  ldr r11,[r7,#0x60] ;@ Get Memory base\n");
   ot("\n");
-  EaCalc(12,0x003f,sea,0);
 
-  ot(";@ Jump - Get new PC from r12\n");
-  CheckPc(11,12,0);
+  ot(";@ Jump - Get new PC from r0\n");
+  CheckPc(11,0,0,1);
   if (!(op&0x40))
   {
     ot("  ldr r2,[r7,#0x3c]\n");
     ot("  sub r1,r4,r11 ;@ r1 = Old PC\n");
   }
-#if EMULATE_ADDRESS_ERRORS_JUMP
+
   // jsr prefetches next instruction before pushing old PC,
   // according to http://pasti.fxatari.com/68kdocs/68kPrefetch.html
-  ot("  mov r4,r0\n");
-  ot("  tst r4,#1 ;@ address error?\n");
-  ot("  bne ExceptionAddressError_r_prg_r4\n");
+#if EMULATE_ADDRESS_ERRORS_JUMP
+    ot("  mov r4,r0\n");
 #else
-  ot("  bic r4,r0,#1\n");
+    ot("  bic r4,r0,#1\n");
 #endif
 
   if (!(op&0x40))
@@ -357,10 +387,12 @@ int OpDbra(int op)
   {
     ot(";@ Decrement Dn.w\n");
 
-    EaCalcRead(0,1,0,1,0x0007);
+    EaCalcRead(2,1,0,1,0x0007);
     ot("  strb r8,[r7,#0x45] ;@ not polling\n");
     ot("  subs r1,r1,#1 ;@ Decrement Dn.w and check for borrow\n");
-    EaWrite   (0,1,0,1,0x0007);
+#if !EMULATE_ADDRESS_ERRORS_JUMP
+    EaWrite   (2,1,0,1,0x0007);
+#endif
 
 #if (USE_CHECKPC_CALLBACK && USE_CHECKPC_DBRA) || EMULATE_ADDRESS_ERRORS_JUMP
     ot("  blo DbraMin1\n");
@@ -368,11 +400,12 @@ int OpDbra(int op)
 
     ot(";@ Get Branch offset:\n");
     ot("  ldrsh r0,[r4]\n");
+ #if EMULATE_ADDRESS_ERRORS_JUMP
+    ot("  tst r0,#1\n");
+    ot("  bne ExceptionAddressError_r_prg_jmp_ofs\n");
+    EaWrite   (2,1,0,1,0x0007);
+ #endif
     CheckPc(4,0);
-#if EMULATE_ADDRESS_ERRORS_JUMP
-    ot("  tst r4,#1 ;@ address error?\n");
-    ot("  bne ExceptionAddressError_r_prg_r4\n");
-#endif
 #else
     ot(";@ Get Branch offset:\n");
     ot(UAL(ldr,sh,hs) "r0,[r4]\n");
@@ -402,6 +435,9 @@ int OpDbra(int op)
   {
     ot(";@ Dn.w is -1:\n");
     ot("DbraMin1%s\n", ms?"":":");
+ #if EMULATE_ADDRESS_ERRORS_JUMP
+    EaWrite   (2,1,0,1,0x0007);
+ #endif
     ot("  add r4,r4,#2 ;@ Skip branch offset\n");
     ot("\n");
     Cycles=12+2;
@@ -421,7 +457,6 @@ int OpBranch(int op)
   int cc=0;
   const char *shift="";
   const char *cond;
-  int pc_reg=0;
 
   offset=(char)(op&0xff);
   cc=(op>>8)&15;
@@ -490,6 +525,23 @@ int OpBranch(int op)
     Cycles=18; // always 18
   }
 
+#if EMULATE_ADDRESS_ERRORS_JUMP
+  if (size == 0 && (op & 1))
+  {
+    if (cc==1)
+    {
+      ot("  add r4,r4,r11%s ;@ r4 = New PC\n",shift);
+      ot("  b ExceptionAddressError_r_prg_r4\n");
+    }
+    else
+    {
+      ot("  add r0,r4,r11%s ;@ r0 = New PC\n",shift);
+      ot("  b ExceptionAddressError_r_prg_jmp\n");
+    }
+    return 0;
+  }
+#endif
+
 #if USE_CHECKPC_CALLBACK && USE_CHECKPC_OFFSETBITS_8
   if (offset!=0 && offset!=-1) checkpc=1;
 #endif
@@ -501,39 +553,48 @@ int OpBranch(int op)
 #endif
   if (checkpc)
   {
-    CheckPc(4,11,0,shift);
-    pc_reg=0;
-  }
-  else
-  {
-    ot("  add r4,r4,r11%s ;@ r4 = New PC\n",shift);
-    pc_reg=4;
-  }
-
-  if ((op & 1) || size != 0)
-  {
-#if EMULATE_ADDRESS_ERRORS_JUMP
-    if (pc_reg!=4)
+    if (cc==1)
     {
-      ot("  mov r4,r%d\n",pc_reg);
-      pc_reg=4;
+      CheckPc(4,11,1,0,shift);
+#if EMULATE_ADDRESS_ERRORS_JUMP
+      if (size != 0)
+      {
+        ot("  tst r4,#1 ;@ address error?\n");
+        ot("  bne ExceptionAddressError_r_prg_r4\n");
+      }
+#endif
     }
-    if (size)
+    else
+    {
+      CheckPc(4,11,1,size!=0,shift);
+    }
+  }
+#if EMULATE_ADDRESS_ERRORS_JUMP
+  else if (size != 0)
+  {
+    if (cc == 1)
     {
       ot("  tst r4,#1 ;@ address error?\n");
       ot("  bne ExceptionAddressError_r_prg_r4\n");
     }
     else
     {
-      ot("  b ExceptionAddressError_r_prg_r4\n");
+      ot("  add r0,r4,r11%s ;@ r0 = New PC\n",shift);
+      ot("  tst r0,#1 ;@ address error?\n");
+      ot("  bne ExceptionAddressError_r_prg_jmp\n");
+      ot("  mov r4,r0\n");
     }
-#else
-    ot("  bic r4,r%d,#1\n",pc_reg);
-    pc_reg=4;
-#endif
   }
-  if (pc_reg!=4)
-    ot("  mov r4,r%d\n",pc_reg);
+#endif
+  else
+  {
+    ot("  add r4,r4,r11%s ;@ r4 = New PC\n",shift);
+    if (size != 0 || (op & 1))
+    {
+      ot("  bic r4,r4,#1\n");
+    }
+  }
+
   ot("\n");
 
   OpEnd(size?0x10:0);

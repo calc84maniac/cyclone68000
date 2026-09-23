@@ -13,6 +13,7 @@
 #include "app.h"
 
 int earead_check_addrerr = 1, eawrite_check_addrerr = 0;
+int ea_access_index = 0;
 
 // some ops use non-standard cycle counts for EAs, so are listed here.
 // all constants borrowed from the MUSASHI core by Karl Stenerud.
@@ -195,6 +196,7 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
   if (ea<0x28)
   {
     int step=1<<size, strr=a;
+    const char *cc="";
 
     if ((ea&7)==7 && step<2) step=2; // move.b (a7)+ or -(a7) steps by 2 not 1
 
@@ -213,21 +215,42 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
     {
       ot("  add r3,r%d,#%d ;@ Post-increment An\n",a,step);
       strr=3;
+#if EMULATE_ADDRESS_ERRORS_IO
+      if (size==2 || (size==1 && ea_access_index==2))
+      {
+        ot("  tst r%d,#1 ;@ address error?\n",a);
+        cc="eq";
+      }
+      if (size==2 && ea_access_index==1 && ((g_op&0xf138)==0xb108)) // cmpm
+      {
+        ot("  subne r3,r3,#2\n");
+        cc="";
+      }
+#endif
     }
 
     if ((ea&0x38)==0x20) // -(An)
+    {
       ot("  sub r%d,r%d,#%d ;@ Pre-decrement An\n",a,a,step);
+#if EMULATE_ADDRESS_ERRORS_IO
+      if (size==2 && ((ea_access_index!=0 && ((g_op&0xb138)==0x9108)) || ea_access_index==2)) // addx/subx
+      {
+        ot("  tst r%d,#1 ;@ address error?\n",a);
+        cc="eq";
+      }
+#endif
+    }
 
     if ((ea&0x38)==0x18||(ea&0x38)==0x20)
     {
       if (ea==0x1f||ea==0x27)
       {
-        ot("  str r%d,[r7,#0x3c] ;@ A7\n",strr);
+        ot("  str%s r%d,[r7,#0x3c] ;@ A7\n",cc,strr);
       }
       else
       {
-        if (lsl>=0) ot("  str r%d,[r7,r2,lsl #%i]\n",strr,lsl);
-        else        ot("  str r%d,[r7,r2,lsr #%i]\n",strr,-lsl);
+        if (lsl>=0) ot("  str%s r%d,[r7,r2,lsl #%i]\n",cc,strr,lsl);
+        else        ot("  str%s r%d,[r7,r2,lsr #%i]\n",cc,strr,-lsl);
       }
     }
 
@@ -423,8 +446,8 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
     ot("\n"); return 0;
   }
 
-  if (ea>=0x3a && ea<=0x3b) MemHandler(2,size,a,earead_check_addrerr); // Fetch
-  else                      MemHandler(0,size,a,earead_check_addrerr); // Read
+  if (ea>=0x3a && ea<=0x3b) MemHandler(2,size,a,earead_check_addrerr,ea); // Fetch
+  else                      MemHandler(0,size,a,earead_check_addrerr,ea); // Read
 
   // defaults to 1, as most things begins with a read
   earead_check_addrerr=1;
@@ -531,7 +554,9 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
     else if (lsl<0) ot("  str%s r%d,[r7,r%d,lsr #%i]\n",Narm[size&3],v,a,-lsl);
     else            ot("  str%s r%d,[r7,r%d]\n",Narm[size&3],v,a);
 
-    ot("\n"); return 0;
+    ot("\n");
+    eawrite_check_addrerr = 0;
+    return 0;
   }
 
   ot(";@ EaWrite: Write r%d into '%s' (address in r%d):\n",v,text,a);
@@ -551,7 +576,7 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
     ot("  mov r1,r%d\n",v);
   }
 
-  MemHandler(1,size,a,eawrite_check_addrerr); // Call write handler
+  MemHandler(1,size,a,eawrite_check_addrerr,ea); // Call write handler
 
   // not check by default, because most cases are rmw and
   // address was already checked before reading

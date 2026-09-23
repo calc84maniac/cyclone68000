@@ -782,6 +782,13 @@ static void PrintFramework()
   // first some wrappers: I see no point inlining this code,
   // as it will be executed in really rare cases.
   AddressErrorWrapper('r', "data", 0x11);
+  ot("ExceptionAddressError_r_prg_jmp_ofs%s\n", ms?"":":");
+  ot("  add r0,r0,r4\n");
+  ot("  add r4,r4,#2\n");
+  ot("ExceptionAddressError_r_prg_jmp%s\n", ms?"":":");
+  ot("  ldr r3,[r7,#0x60] ;@ Get Memory base\n");
+  ot("  sub r0,r0,r3\n");
+  // fallthrough
   AddressErrorWrapper('r', "prg",  0x12);
   AddressErrorWrapper('w', "data", 0x01);
   // there are no program writes
@@ -870,7 +877,8 @@ static void PrintFramework()
   // information word
   ot(";@ Push info word:\n");
   ot("  ldr r0,[r7,#0x3c] ;@ A7\n");
-  ot("  mov r1,r6\n");
+  ot("  bic r1,r8,#0x1F ;@ Upper bits come from IR\n");
+  ot("  add r1,r1,r6\n");
   ot("  sub r0,r0,#2 ;@ Predecrement A7\n");
   ot("  str r0,[r7,#0x3c] ;@ Save A7\n");
   MemHandler(1,1,0,0);
@@ -1011,7 +1019,7 @@ static void MemHandlerAddrParam(int addrreg)
 // ---------------------------------------------------------------------------
 // Call Read(r0), Write(r0,r1) or Fetch(r0)
 // Trashes r0-r3,r12,lr
-int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
+int MemHandler(int type,int size,int addrreg,int need_addrerr_check,int ea)
 {
   int func=0x68+type*0xc+(size<<2); // Find correct offset
   char what[32];
@@ -1036,11 +1044,36 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
 #if EMULATE_ADDRESS_ERRORS_IO
   if (size > 0 && need_addrerr_check)
   {
+    int pc_ofs=0;
+    if (ea_access_index==2) {
+      pc_ofs=(ea<0x28)?2:0;
+      if (ea==0x39 && (g_op&0x0038))
+        pc_ofs=-2;
+    }
+    else if (ea>=0x18 && ea<0x20 && ea_access_index==1 && ((g_op&0xf138)==0xb108)) // cmpm (An)+
+      pc_ofs=2;
+    else if (ea>=0x20 && ea<0x28 && (size<2 || (ea_access_index==1 && ((g_op&0xb138)==0x9108)))) // addx/subx -(An)
+      pc_ofs=2;
+    else if (ea>=0x28 && ea<0x38) // ($nn,An) (di), ($nn,An,Rn) (ix)
+      pc_ofs=-2;
+    else if (ea>=0x3a && ea<=0x3b) // ($nn,PC) (pcdi), ($nn,pc,Rn) (pcix)
+      pc_ofs=-2;
  #if !defined(MEMHANDLERS_DIRECT_PREFIX) && !HAVE_ARMv5
     ot("  add lr,pc,#4*%i\n",ofs+2); // helps to prevent interlocks
  #endif
     MemHandlerAddrParam(addrreg);
     ot("  tst r0,#1 ;@ address error?\n");
+    if (ea>=0x20 && ea<0x28) { // -(An)
+      if (size<2 && ea_access_index==2 && type==1) {
+        if (pc_ofs) ot(UAL(ldr,h,ne) "r8,[r4],#%i ;@ prefetch before address error\n",pc_ofs);
+        else        ot(UAL(ldr,h,ne) "r8,[r4] ;@ prefetch before address error\n");
+        pc_ofs=0;
+      }
+      if (size==2 && ((ea_access_index!=0 && ((g_op&0xb138)==0x9108)) || ea_access_index==2)) // addx/subx -(An)
+        ot("  addne r0,r0,#2\n");
+    }
+    if (pc_ofs>0) ot("  addne r4,r4,#%i\n",pc_ofs);
+    if (pc_ofs<0) ot("  subne r4,r4,#%i\n",-pc_ofs);
     switch (type) {
       case 0: ot("  bne ExceptionAddressError_r_data\n"); break;
       case 1: ot("  bne ExceptionAddressError_w_data\n"); break;
@@ -1048,6 +1081,8 @@ int MemHandler(int type,int size,int addrreg,int need_addrerr_check)
     }
   }
   else
+#else
+  (void)ea;
 #endif
 
 #ifdef MEMHANDLERS_DIRECT_PREFIX

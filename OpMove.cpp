@@ -71,7 +71,7 @@ void SuperEnd(void)
 
 // does OSP and A7 swapping if needed
 // new or old SR (not the one already in [r7,#0x44]) should be passed in r11
-// uses srh from srh_reg (loads if < 0), trashes r0,r11
+// uses srh from srh_reg (loads if < 0), trashes srh_reg,r11
 void SuperChange(int op,int srh_reg)
 {
   ot(";@ A7 <-> OSP?\n");
@@ -79,14 +79,14 @@ void SuperChange(int op,int srh_reg)
     ot("  ldr r0,[r7,#0x44] ;@ Get other SR high\n");
     srh_reg=0;
   }
-  ot("  eor r0,r%i,r11\n",srh_reg);
-  ot("  tst r0,#0x20\n");
+  ot("  eor r%i,r%i,r11\n",srh_reg,srh_reg);
+  ot("  tst r%i,#0x20\n",srh_reg);
   ot("  beq no_sp_swap%.4x\n",op);
   ot(" ;@ swap OSP and A7:\n");
   ot("  ldr r11,[r7,#0x3C] ;@ Get A7\n");
-  ot("  ldr r0, [r7,#0x48] ;@ Get OSP\n");
+  ot("  ldr r%i,[r7,#0x48] ;@ Get OSP\n",srh_reg);
   ot("  str r11,[r7,#0x48]\n");
-  ot("  str r0, [r7,#0x3C]\n");
+  ot("  str r%i,[r7,#0x3C]\n",srh_reg);
   ot("no_sp_swap%.4x%s\n", op, ms?"":":");
 }
 
@@ -138,23 +138,53 @@ int OpMove(int op)
   split = ((tea&0x38)==0x20 && (size==2 || movea)); // -(An)
   if (split) r=11;
 #endif
+#if EMULATE_ADDRESS_ERRORS_IO
+  if (size==2) {
+    if (sea>=0x10 && sea!=0x3c) {
+      if ((tea>=0x10 && tea<0x20) || tea==0x39) r=11;
+    } else {
+      if ((tea>=0x10 && tea<0x20) || (tea>=0x28 && tea!=0x38 && tea!=0x39)) r=11;
+    }
+  }
+#endif
 
   if (movea==0)
   {
+    ea_access_index=1;
     if ((sea < 0x10 || sea == 0x3c) && size < 2)
     {
       eatype = earwt_zero_extend;
       EaCalcRead(-1,r,sea,size,0x003f,eatype);
-      ot("  movs r2,r%d,lsl #%d\n",r,size?16:24);
-      OpGetFlagsNZ(2);
+      if (r!=11) {
+        ot("  movs r2,r%d,lsl #%d\n",r,size?16:24);
+        OpGetFlagsNZ(2);
+      }
     }
     else
     {
+      int setnz=r!=11||split;
+#if EMULATE_ADDRESS_ERRORS_IO
+      if ((sea<0x10 || sea==0x3c) && tea>=0x28) setnz=1;
+#endif
       eatype = earwt_shifted_up;
-      EaCalcRead(-1,r,sea,size,0x003f,eatype,1);
-      OpGetFlagsNZ(r);
+      EaCalcRead(-1,r,sea,size,0x003f,eatype,setnz);
+      if (r!=11||split)
+        OpGetFlagsNZ(r);
+#if EMULATE_ADDRESS_ERRORS_IO
+      else if ((tea&0x38)!=0x20) {
+        if (sea>=0x10 && sea!=0x3c) {
+          ot("  movs r2,r%d,lsl #16 ;@ Set flags for address error\n",r);
+          OpGetFlagsNZ(2);
+        } else if (tea>=0x28) {
+          ot("  and r3,r10,#0x30000000 ;@ Set flags for address error\n");
+          OpGetFlagsNZ(r);
+          ot("  add r10,r10,r3\n");
+        }
+      }
+#endif
     }
     ot("\n");
+    ea_access_index=2;
   }
   else
   {
@@ -165,15 +195,33 @@ int OpMove(int op)
 
   eawrite_check_addrerr=1;
   if (split) { // -(An)
-    EaCalc (8,0x0e00,tea,size,earwt_msb_dont_care);
-    ot("  add r0,r8,#2\n");
+    EaCalc (6,0x0e00,tea,size,earwt_msb_dont_care);
+    ot("  add r0,r6,#2\n");
+    ea_access_index=1; // prevent final word prefetch behavior
     EaWrite(0,     r,tea,1,0x0e00,earwt_msb_dont_care);
-    EaWrite(8,     r,tea,1,0x0e00,earwt_shifted_up);
+    EaWrite(6,     r,tea,1,0x0e00,earwt_shifted_up);
+    ot("  ldr r6,[r7,#0x54] ;@ restore Opcode Jump table\n");
   }
   else
   {
     EaCalc (0,0x0e00,tea,size,eatype);
     EaWrite(0,     r,tea,size,0x0e00,eatype);
+  }
+
+  if (r==11&&!split)
+  {
+    if (eatype==earwt_shifted_up) {
+      if ((sea<0x10 || sea==0x3c) && tea>=0x28) {
+        ot("  and r10,r10,#0xc0000000\n");
+      } else {
+        ot("  tst r%d,r%d\n",r,r);
+        OpGetFlagsNZ(r);
+      }
+    }
+    else {
+      ot("  movs r2,r%d,lsl #%d\n",r,size?16:24);
+      OpGetFlagsNZ(2);
+    } 
   }
 
 #if CYCLONE_FOR_GENESIS && !MEMHANDLERS_CHANGE_CYCLES
@@ -224,6 +272,7 @@ int OpMoveSr(int op)
 {
   int type=0,ea=0;
   int use=0,size=1;
+  int eareg=0;
 
   type=(op>>9)&3; // from SR, from CCR, to CCR, to SR
   ea=op&0x3f;
@@ -254,10 +303,19 @@ int OpMoveSr(int op)
 
   if (type==0 || type==1)
   {
-    eawrite_check_addrerr=1;
+#if EMULATE_ADDRESS_ERRORS_IO
+    if (ea>=0x10) {
+      // dummy read may cause address error
+      eareg=11;
+      EaCalcRead(11,0,ea,size,0x003f,earwt_msb_dont_care);
+    }
+#endif
     OpFlagsToReg(type==0);
-    EaCalc (0,0x003f,ea,size,earwt_zero_extend);
-    EaWrite(0,     1,ea,size,0x003f,earwt_zero_extend);
+    if (eareg==0) {
+      EaCalc(0,0x003f,ea,size,earwt_zero_extend);
+      eawrite_check_addrerr=1;
+    }
+    EaWrite(eareg,1,ea,size,0x003f,earwt_zero_extend);
   }
 
   if (type==2 || type==3)
@@ -409,6 +467,23 @@ int OpMovem(int op)
   ot(";@ Get the address into r6:\n");
   EaCalc(6,0x003f,cea,size);
 
+  ot("  tst r11,r11\n");        // sanity check
+  ot("  beq NoRegs%.4x\n",op);
+  ot("\n");
+
+  // check for address error before flushing PC
+#if EMULATE_ADDRESS_ERRORS_IO
+  ot("  tst r6,#1 ;@ address error?\n");
+  ot("  addne r4,r4,#2\n");
+  if (decr) ot("  subne r0,r6,#2\n");
+  else      ot("  movne r0,r6\n");
+  if (cea>=0x3a && cea<=0x3b)
+    ot("  bne ExceptionAddressError_r_prg\n");
+  else
+    ot("  bne ExceptionAddressError_%c_data\n",dir?'r':'w');
+  ot("\n");
+#endif
+
   // must save PC, need a spare register
   FlushPC(1);
 
@@ -417,15 +492,6 @@ int OpMovem(int op)
   else      ot("  sub r4,r7,#4\n");
   
   ot("\n");
-  ot("  tst r11,r11\n");        // sanity check
-  ot("  beq NoRegs%.4x\n",op);
-
-#if EMULATE_ADDRESS_ERRORS_IO
-  ot("\n");
-  ot("  tst r6,#1 ;@ address error?\n");
-  ot("  movne r0,r6\n");
-  ot("  bne ExceptionAddressError_%c_data\n",dir?'r':'w');
-#endif
 
   ot("\n");
 #if HAVE_ARMv6T2
@@ -486,8 +552,8 @@ int OpMovem(int op)
     EaWrite(0,     6,8|(ea&7),2,0x0007);
   }
 
-  ot("NoRegs%.4x%s\n",op, ms?"":":");
   ot("  ldr r4,[r7,#0x40]\n"); pc_in_reg=1;
+  ot("NoRegs%.4x%s\n",op, ms?"":":");
   ot("  ldr r6,[r7,#0x54] ;@ restore Opcode Jump table\n");
   ot("\n");
 

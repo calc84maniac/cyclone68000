@@ -18,6 +18,7 @@ int OpArith(int op)
 {
   int type=0,size=0;
   int sea=0,tea=0;
+  int sreg=10;
   int use=0;
   const char *shiftstr="";
   EaRWType stype=earwt_msb_dont_care;
@@ -49,22 +50,26 @@ int OpArith(int op)
   }
 
   // imm must be read first
-  EaCalcRead(-1,10,sea,size,0,stype);
+  if (tea<0x10) sreg=1;
+#if EMULATE_ADDRESS_ERRORS_IO
+  else sreg=(type!=6)?6:11;
+#endif
+  EaCalcRead(-1,sreg,sea,size,0,stype);
   EaCalcRead((type!=6)?11:-1,0,tea,size,0x003f,stype);
 
   if (size<2&&ttype==earwt_shifted_up) {
     shiftstr=size?",asl #16":",asl #24";
-    ot("  mov r10,r10%s\n",shiftstr);
+    ot("  mov r%d,r%d%s\n",sreg,sreg,shiftstr);
   }
 
   ot(";@ Do arithmetic:\n");
 
-  if (type==0) ot("  orrs r1,r10,r0%s\n",shiftstr);
-  if (type==1) ot("  ands r1,r10,r0%s\n",shiftstr);
+  if (type==0) ot("  orrs r1,r%d,r0%s\n",sreg,shiftstr);
+  if (type==1) ot("  ands r1,r%d,r0%s\n",sreg,shiftstr);
   if (type==2||type==6)
-               ot("  rsbs r1,r10,r0%s ;@ Defines NZCV\n",shiftstr);
-  if (type==3) ot("  adds r1,r10,r0%s ;@ Defines NZCV\n",shiftstr);
-  if (type==5) ot("  eors r1,r10,r0%s\n",shiftstr);
+               ot("  rsbs r1,r%d,r0%s ;@ Defines NZCV\n",sreg,shiftstr);
+  if (type==3) ot("  adds r1,r%d,r0%s ;@ Defines NZCV\n",sreg,shiftstr);
+  if (type==5) ot("  eors r1,r%d,r0%s\n",sreg,shiftstr);
 
   if (type< 2) OpGetFlagsNZ(1); // Ori/And
   if (type==2) OpGetFlags(1,1); // Sub: Subtract/X-bit
@@ -77,6 +82,8 @@ int OpArith(int op)
   {
     EaWrite(11, 1, tea,size,0x003f,ttype);
   }
+
+  if (sreg==6) ot("  ldr r6,[r7,#0x54]\n");
 
   // Correct cycles:
   if (type==6)
@@ -679,7 +686,7 @@ int OpAritha(int op)
 int OpAddx(int op)
 {
   int use=0;
-  int type=0,size=0,dea=0,sea=0,mem=0;
+  int type=0,size=0,dea=0,sea=0,mem=0,sreg=0;
   const char *asl="";
 
   type=(op>>14)&1;
@@ -706,14 +713,18 @@ int OpAddx(int op)
   if (mem)
   {
     ot(";@ Get src/dest EA vals\n");
-    EaCalcRead(-1,11,sea,size,0x000f,earwt_msb_dont_care);
-    EaCalcRead(8,0,dea,size,0x0e00,earwt_msb_dont_care);
+    ea_access_index = 1;
+    EaCalcRead(-1,6,sea,size,0x000f,earwt_msb_dont_care);
+    ea_access_index = 2;
+    EaCalcRead(11,0,dea,size,0x0e00,earwt_msb_dont_care);
+    sreg=6;
   }
   else
   {
     ot(";@ Get src/dest reg vals\n");
-    EaCalcRead(-1,11,sea,size,0x0007,earwt_msb_dont_care);
-    EaCalcRead(8,0,dea,size,0x0e00,earwt_msb_dont_care);
+    EaCalcRead(-1,1,sea,size,0x0007,earwt_msb_dont_care);
+    EaCalcRead(11,0,dea,size,0x0e00,earwt_msb_dont_care);
+    sreg=1;
   }
 
   ot(";@ Do arithmetic:\n");
@@ -722,28 +733,30 @@ int OpAddx(int op)
 
   if (size<2) {
     asl=size?",asl #16":",asl #24";
-    ot("  mov r11,r11%s\n",asl);
+    ot("  mov r%d,r%d%s\n",sreg,sreg,asl);
     ot("  mvns r2,r2,lsr #30 ;@ Get X bit into Carry, set upper bits of r2\n");
     if (type==1) {
       ot(";@ Make sure the carry bit will tip the balance:\n");
-      ot("  orrcs r11,r11,r2,lsr #%i ;@ Set lower bits of operand if Carry is set\n",(size==0)?8:16);
+      ot("  orrcs r%d,r%d,r2,lsr #%i ;@ Set lower bits of operand if Carry is set\n",sreg,sreg,(size==0)?8:16);
     }
   }
   else
     ot("  movs r2,r2,lsl #3 ;@ Get X bit into Carry\n");
   ot("\n");
 
-  if (type==0) ot("  sbcs r1,r11,r0%s ;@ Defines CV\n",asl);
+  if (type==0) ot("  sbcs r%d,r%d,r0%s ;@ Defines CV\n",sreg,sreg,asl);
   if (type==0 && size<2)
-               ot("  orr r1,r1,r2,lsr #%i ;@ Set lower bits of result\n",(size==0)?8:16);
-  if (type==0) ot("  mvns r1,r1 ;@ Defines NZ\n");
-  if (type==1) ot("  adcs r1,r11,r0%s ;@ Defines NZCV\n",asl);
+               ot("  orr r%d,r%d,r2,lsr #%i ;@ Set lower bits of result\n",sreg,sreg,(size==0)?8:16);
+  if (type==0) ot("  mvns r1,r%d ;@ Defines NZ\n",sreg);
+  if (type==1) ot("  adcs r1,r%d,r0%s ;@ Defines NZCV\n",sreg,asl);
   OpGetFlags(0,1,0); // don't invert carry, save X bit
   ot("  and r10,r10,r3 ;@ fix Z\n");
   ot("\n");
 
   ot(";@ Save result:\n");
-  EaWrite(8, 1, dea,size,0x0e00,earwt_shifted_up);
+  EaWrite(11,1,dea,size,0x0e00,earwt_shifted_up);
+
+  if (sreg==6) ot("  ldr r6,[r7,#0x54]\n");
 
   OpEnd(sea,dea);
 
@@ -844,9 +857,11 @@ int OpCmpm(int op)
   OpStart(op,sea); Cycles=4;
 
   ot(";@ Get src operand into r11:\n");
+  ea_access_index = 1;
   EaCalcRead(-1,11,sea,size,0x0007,earwt_shifted_up);
 
   ot(";@ Get dst operand into r0:\n");
+  ea_access_index = 2;
   EaCalcRead(-1, 0,dea,size,0x0e00,earwt_msb_dont_care);
 
   if (size<2) asl=size?",asl #16":",asl #24";

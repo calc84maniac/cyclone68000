@@ -262,6 +262,12 @@ int OpNeg(int op)
   OpStart(op,ea); Cycles=size<2?4:6;
   if(ea >= 0x10)  Cycles*=2;
 
+#if EMULATE_ADDRESS_ERRORS_IO
+  if (type==1 && size && ea>=0x10) {
+    EaCalcRead (11,0,ea,size,0x003f,earwt_msb_dont_care); // Dummy read, affects address error info
+  }
+  else
+#endif
   if (type==1)      EaCalc (11,0x003f,ea,size,earwt_msb_dont_care); // Don't need to read for 'clr' (or do we, for a dummy read?)
 #if HAVE_ARMv6
   else if (type==3) EaCalcRead (11,0,ea,size,0x003f,earwt_sign_extend);
@@ -325,7 +331,7 @@ int OpNeg(int op)
     ot("\n");
   }
 
-  if (type==1) eawrite_check_addrerr=1;
+  //if (type==1) eawrite_check_addrerr=1;
   EaWrite(11, 1,ea,size,0x003f,wtype);
 
   OpEnd(ea);

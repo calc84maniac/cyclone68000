@@ -78,6 +78,7 @@ void OpStart(int op, int sea, int tea, int op_changes_cycles, int supervisor_che
   pc_in_reg = 1;
   flags_in_reg = 1;
   opend_op_changes_cycles = opend_check_interrupt = opend_check_trace = 0;
+  ea_access_index = 0;
 }
 
 void OpEnd(int sea, int tea)
