@@ -128,37 +128,25 @@ int OpTrap(int op)
 // --------------------- Opcodes 0x4e50+ ---------------------
 int OpLink(int op)
 {
-  int use=0,reg;
-
-  use=op&~7;
-  reg=op&7;
-  if (reg==7) use=op;
+  int use=op&~7;
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 
   OpStart(op,0x10);
 
-  if(reg!=7) {
-    ot(";@ Get An\n");
-    EaCalcRead(11, 1, 8, 2, 7);
-    ot("  ldr r0,[r7,#0x3c] ;@ Get A7\n");
-    ot("  sub r0,r0,#4 ;@ A7-=4\n");
-  }
-  else {
-    ot("  ldr r1,[r7,#0x3c] ;@ Get A7\n");
-    ot("  sub r0,r1,#4 ;@ A7-=4\n");
-  }
-  ot("  mov r8,r0 ;@ abuse r8\n");
+  ot("  ldr r0,[r7,#0x3c] ;@ Get A7\n");
+  ot(";@ Get An\n");
+  EaCalcRead(11, 1, 8, 2, 7);
+  ot("  sub r8,r0,#4 ;@ A7-=4, abuse r8\n");
   ot("\n");
   
   ot(";@ Write An to Stack\n");
-  MemHandler(1,2);
-
-  ot(";@ Save to An\n");
-  if(reg!=7)
-    EaWrite(11, 8, 8, 2, 7);
+  MemHandler(1,2,8);
 
   ot(";@ Get offset:\n");
   EaCalcRead(-1,0,0x3c,1,0); // abused r8 is ok because of imm EA
+
+  ot(";@ Save to An\n");
+  EaWrite(11, 8, 8, 2, 7);
 
   ot("  add r8,r8,r0 ;@ Add offset to A7\n");
   ot("  str r8,[r7,#0x3c]\n");
