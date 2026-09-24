@@ -211,12 +211,30 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
 
     if ((ea&0x38)==0x18) // (An)+
     {
+#if COMBINE_STACK_BYTE_OPS
+      if (size==0&&ea!=0x1f)
+      {
+        ot("  cmp r2,#0x%.4x ;@ Check for A7\n",0xf<<(2-lsl));
+        ot("  adc r3,r%d,#1 ;@ Post-increment An by 1 or 2\n",a);
+      }
+      else
+#endif
       ot("  add r3,r%d,#%d ;@ Post-increment An\n",a,step);
       strr=3;
     }
 
     if ((ea&0x38)==0x20) // -(An)
+    {
+#if COMBINE_STACK_BYTE_OPS
+      if (size==0&&ea!=0x27)
+      {
+        ot("  rsbs r3,r2,#0x%.4x ;@ Check for A7\n",0xe<<(2-lsl));
+        ot("  sbc r%d,r%d,#1 ;@ Pre-decrement An by 1 or 2\n",a,a);
+      }
+      else
+#endif
       ot("  sub r%d,r%d,#%d ;@ Pre-decrement An\n",a,a,step);
+    }
 
     if ((ea&0x38)==0x18||(ea&0x38)==0x20)
     {

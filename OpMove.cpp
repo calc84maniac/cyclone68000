@@ -127,8 +127,10 @@ int OpMove(int op)
 
   use=OpBase(op,size);
   if (tea<0x38) use&=~0x0e00; // Use same handler for register ?0-7
-  
+
+#if !COMBINE_STACK_BYTE_OPS
   if (tea==0x1f || tea==0x27) use|=0x0e00; // Specific handler for (a7)+ and -(a7)
+#endif
 
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 

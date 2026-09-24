@@ -81,6 +81,12 @@
 #define INLINE_UNROLLED_DIV         0
 
 /*
+ * If enabled, disables separate handlers for stack byte pushes/pops.
+ * May make non-stack byte pushes/pops slightly slower on ARM7, but saves space.
+ */
+#define COMBINE_STACK_BYTE_OPS      0
+
+/*
  * Address mask for memory hadlers. The bits set will be masked out of address
  * parameter, which is passed to r/w memory handlers.
  * Using 0xff000000 means that only 24 least significant bits should be used.

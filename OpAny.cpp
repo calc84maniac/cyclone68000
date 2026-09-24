@@ -138,7 +138,9 @@ int OpBase(int op,int size,int sepa)
 {
   int ea=op&0x3f; // Get Effective Address
   if (ea<0x10) return sepa?(op&~0x7):(op&~0xf); // Use 1 handler for d0-d7 and a0-a7
+#if !COMBINE_STACK_BYTE_OPS
   if (size==0&&(ea==0x1f || ea==0x27)) return op; // Specific handler for (a7)+ and -(a7)
+#endif
   if (ea<0x38) return op&~7;   // Use 1 handler for (a0)-(a7), etc...
   return op;
 }

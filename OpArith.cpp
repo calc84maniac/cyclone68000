@@ -507,8 +507,10 @@ int OpAbcd(int op)
   if (mem) { sea|=0x20; dea|=0x20; }
 
   use=op&~0x0e07; // Use same opcode for all registers..
+#if !COMBINE_STACK_BYTE_OPS
   if (sea==0x27) use|=0x0007; // ___x.b -(a7)
   if (dea==0x27) use|=0x0e00; // ___x.b -(a7)
+#endif
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 
   OpStart(op,sea,dea); Cycles=6;
@@ -695,8 +697,10 @@ int OpAddx(int op)
   if (mem) { sea+=0x20; dea+=0x20; }
 
   use=op&~0x0e07; // Use same opcode for Dn
+#if !COMBINE_STACK_BYTE_OPS
   if (size==0&&sea==0x27) use|=0x0007; // ___x.b -(a7)
   if (size==0&&dea==0x27) use|=0x0e00; // ___x.b -(a7)
+#endif
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 
   OpStart(op,sea,dea); Cycles=4;
@@ -837,8 +841,10 @@ int OpCmpm(int op)
   dea=(op>>9)&0x3f;
 
   use=op&~0x0e07; // Use 1 handler for all registers..
+#if !COMBINE_STACK_BYTE_OPS
   if (size==0&&sea==0x1f) use|=0x0007; // ..except (a7)+
   if (size==0&&dea==0x1f) use|=0x0e00;
+#endif
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
 
   OpStart(op,sea); Cycles=4;
