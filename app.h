@@ -82,9 +82,9 @@ int Ea_add_ns(int *tab, int ea); // add nonstandard EA cycles
 int EaCalc(int a,int mask,int ea,int size,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0); // 7
 int EaRead(int a,int v,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0); // 8
 int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int set_nz=0,int force_shift=0); // 8
-int EaCanRead(int ea,int size);
+int EaCanRead(int ea,int size,int low=1);
 int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type=earwt_sign_extend,int force_shift=0);
-int EaCanWrite(int ea);
+int EaCanWrite(int ea,int low=1);
 int EaAn(int ea);
 
 // Main.cpp

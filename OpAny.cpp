@@ -83,6 +83,7 @@ void OpStart(int op, int sea, int tea, int op_changes_cycles, int supervisor_che
 void OpEnd(int sea, int tea)
 {
   int did_fetch=0;
+  int rofs=8;
   opend_check_trace = opend_check_trace && EMULATE_TRACE;
 #if MEMHANDLERS_CHANGE_CYCLES
   if ((sea >= 0x10 && sea != 0x3c) || (tea >= 0x10 && tea != 0x3c))
@@ -118,17 +119,25 @@ void OpEnd(int sea, int tea)
     ot(";@ CheckInterrupt:\n");
     if (!opend_check_trace)
       ot("  ldr r1,[r7,#0x44]\n");
+#if MINIFY_JUMPTABLE
+    //ot("  mov r3,r8,lsr #3\n");
+    //rofs=3;
+#endif
     ot("  movs r0,r1,lsr #24 ;@ Get IRQ level\n"); // same as  ldrb r0,[r7,#0x47]
-    ot("  ldreq pc,[r6,r8,asl #2] ;@ Jump to next opcode handler\n");
+    ot("  ldreq pc,[r6,r%d,asl #2] ;@ Jump to next opcode handler\n",rofs);
     ot("  cmp r0,#6 ;@ irq>6 ?\n");
     ot("  andle r1,r1,#7 ;@ Get interrupt mask\n");
     ot("  cmple r0,r1 ;@ irq<=6: Is irq<=mask ?\n");
-    ot("  ldrle pc,[r6,r8,asl #2] ;@ Jump to next opcode handler\n");
+    ot("  ldrle pc,[r6,r%d,asl #2] ;@ Jump to next opcode handler\n",rofs);
     ot("  b CycloneDoInterruptGoBack\n");
   }
   else
   {
-    ot("  ldrgt pc,[r6,r8,asl #2] ;@ Jump to opcode handler\n");
+#if MINIFY_JUMPTABLE
+    //ot("  mov r3,r8,lsr #3\n");
+    //rofs=3;
+#endif
+    ot("  ldrgt pc,[r6,r%d,asl #2] ;@ Jump to opcode handler\n",rofs);
     ot("  b CycloneEnd\n");
   }
   ot("\n");
@@ -142,7 +151,11 @@ int OpBase(int op,int size,int sepa)
   if (size==0&&(ea==0x1f || ea==0x27)) return op; // Specific handler for (a7)+ and -(a7)
 #endif
   if (ea<0x38) return op&~7;   // Use 1 handler for (a0)-(a7), etc...
+#if MINIFY_JUMPTABLE
+  return op&~7;
+#else
   return op;
+#endif
 }
 
 // Get flags, trashes r2

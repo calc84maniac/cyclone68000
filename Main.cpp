@@ -27,8 +27,13 @@ int arm_op_count;
 
 // opcodes often used by games
 static const unsigned short hot_opcodes[] = {
+#if MINIFY_JUMPTABLE
+  0x6708, // beq     $3
+  0x6608, // bne     $3
+#else
   0x6702, // beq     $3
   0x6602, // bne     $3
+#endif
   0x51c8, // dbra    Dn, $2
   0x4a38, // tst.b   $0.w
   0xd040, // add.w   Dn, Dn
@@ -36,7 +41,11 @@ static const unsigned short hot_opcodes[] = {
   0x0240, // andi.w  #$0, D0
   0x2038, // move.l  $0.w, D0
   0xb0b8, // cmp.l   $0.w, D0
+#if MINIFY_JUMPTABLE
+  0x6008, // bra     $3
+#else
   0x6002, // bra     $3
+#endif
   0x30c0, // move.w  D0, (A0)+
   0x3028, // move.w  ($0,A0), D0
   0x0c40, // cmpi.w  #$0, D0
@@ -54,7 +63,11 @@ static const unsigned short hot_opcodes[] = {
   0xb038, // cmp.b   $0.w, D0
   0x3039, // move.w  $0.l, D0
   0x4840, // swap    D0
+#if MINIFY_JUMPTABLE
+  0x6108, // bsr     $3
+#else
   0x6102, // bsr     $3
+#endif
   0x6100, // bsr     $2
   0x5e40, // addq.w  #7, D0
   0x1039, // move.b  $0.l, D0
@@ -66,10 +79,17 @@ static const unsigned short hot_opcodes[] = {
   0xc040, // and.w   D0, D0
   0x3180, // move.w  D0, (A0,D0.w)
   0x1198, // move.b  (A0)+, (A0,D0.w)
+#if MINIFY_JUMPTABLE
+  0x6508, // bcs     $3
+  0x6500, // bcs     $2
+  0x6408, // bcc     $3
+  0x6a08, // bpl     $3
+#else
   0x6502, // bcs     $3
   0x6500, // bcs     $2
   0x6402, // bcc     $3
   0x6a02, // bpl     $3
+#endif
   0x41f0, // lea     (A0,D0.w), A0
   0x4a28, // tst.b   ($0,A0)
   0x0828, // btst    #$0, ($0,A0)
@@ -1161,17 +1181,30 @@ static void PrintOpcodes()
   for (op=0;op<hot_opcode_count;op++)
     OpAny(hot_opcodes[op]);
 
+  int count=0;
+  int last=0;
+  int diff=0;
   for (op=0;op<0x10000;op++)
   {
     if ((op&0xfff)==0) { printf("%x",op>>12); fflush(stdout); } // Update progress
 
     if (!is_op_hot(op))
       OpAny(op);
+    if ((op&7)==0) {
+      count+=diff;
+      if (diff) printf("\nDiffering page: %.4x\n",last);
+      last=CyJump[op];
+      diff=0;
+    }
+    else if (last!=CyJump[op])
+      diff=1;
   }
-
   ot("\n");
 
   printf("]\n");
+
+  count+=diff;
+  printf("Differing pages: %d\n",count);
 }
 
 // helper

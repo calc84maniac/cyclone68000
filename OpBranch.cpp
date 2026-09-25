@@ -276,10 +276,10 @@ int OpJsr(int op)
 
   ot("  ldr r11,[r7,#0x60] ;@ Get Memory base\n");
   ot("\n");
-  EaCalc(12,0x003f,sea,0);
+  EaCalc(0,0x003f,sea,-1);
 
-  ot(";@ Jump - Get new PC from r12\n");
-  CheckPc(11,12,0);
+  ot(";@ Jump - Get new PC from r0\n");
+  CheckPc(11,0,0);
   if (!(op&0x40))
   {
     ot("  ldr r2,[r7,#0x3c]\n");
@@ -411,7 +411,11 @@ int OpBranch(int op)
   const char *cond;
   int pc_reg=0;
 
+#if MINIFY_JUMPTABLE
+  offset=(char)(op&0xf8);
+#else
   offset=(char)(op&0xff);
+#endif
   cc=(op>>8)&15;
 
   // Special offsets:
@@ -419,8 +423,13 @@ int OpBranch(int op)
   if (offset==-1) size=2;
 
   if (size==2) size=0; // 000 model does not support long displacement
+#if MINIFY_JUMPTABLE
+  if (size) use=op&0xff00; // 8-bit or 16-bit
+  else use=(op&0xff00)+8; // Use same opcode for always-8-bit branches
+#else
   if (size) use=op; // 16-bit or 32-bit
   else use=(op&0xff01)+2; // Use same opcode for all 8-bit branches
+#endif
 
   if (op!=use) { OpUse(op,use); return 0; } // Use existing handler
   OpStart(op,size?0x10:0);
@@ -436,7 +445,12 @@ int OpBranch(int op)
   {
     if (size<2)
     {
+#if MINIFY_JUMPTABLE
+      ot("  ands r11,r8,#0xff ;@ Check for 16-bit Branch offset\n");
+      ot(UAL(ldr,sh,eq) "r11,[r4] ;@ Fetch Branch offset\n");
+#else
       ot("  ldrsh r11,[r4] ;@ Fetch Branch offset\n");
+#endif
     }
     else
     {
@@ -468,7 +482,11 @@ int OpBranch(int op)
     ot("  ldr r12,[r7,#0x60] ;@ Get Memory base\n");
     ot("  ldr r2,[r7,#0x3c]\n");
     ot("  sub r1,r4,r12 ;@ r1 = Old PC\n");
+#if MINIFY_JUMPTABLE
+    if (size) ot("  addeq r1,r1,#%d\n",1<<size);
+#else
     if (size) ot("  add r1,r1,#%d\n",1<<size);
+#endif
     ot("\n");
     ot(";@ Push r1 onto stack\n");
     ot("  sub r0,r2,#4 ;@ Predecrement A7\n");
@@ -498,7 +516,9 @@ int OpBranch(int op)
     pc_reg=4;
   }
 
+#if !MINIFY_JUMPTABLE
   if ((op & 1) || size != 0)
+#endif
   {
 #if EMULATE_ADDRESS_ERRORS_JUMP
     if (pc_reg!=4)
@@ -506,7 +526,7 @@ int OpBranch(int op)
       ot("  mov r4,r%d\n",pc_reg);
       pc_reg=4;
     }
-    if (size)
+    if (!(op & 1))
     {
       ot("  tst r4,#1 ;@ address error?\n");
       ot("  bne ExceptionAddressError_r_prg_r4\n");
@@ -530,8 +550,17 @@ int OpBranch(int op)
   if (cc>=2&&(op&0xff01)==0x6700)
   {
     ot("BccDontBranch%i%s\n", 8<<size, ms?"":":");
+#if MINIFY_JUMPTABLE
+    if (size) {
+      ot("  tst r8,#0xff\n");
+      ot("  addeq r4,r4,#2\n");
+      ot("  subeq r5,r5,#4\n");
+    }
+    Cycles-=2;
+#else
     if (size) ot("  add r4,r4,#%d\n",1<<size);
     Cycles+=(size==1) ? 2 : -2; // Branch not taken
+#endif
     OpEnd(0);
   }
 

@@ -123,7 +123,7 @@ int OpMove(int op)
 
   // See if we can do this opcode:
   if (EaCanRead (sea,size)==0) return 1;
-  if (EaCanWrite(tea     )==0) return 1;
+  if (EaCanWrite(tea,0)==0) return 1;
 
   use=OpBase(op,size);
   if (tea<0x38) use&=~0x0e00; // Use same handler for register ?0-7
@@ -209,7 +209,7 @@ int OpLea(int op)
   OpStart(op,sea,tea);
 
   eawrite_check_addrerr=1;
-  EaCalc (1,0x003f,sea,0); // Lea
+  EaCalc (1,0x003f,sea,-1); // Lea
   EaCalc (0,0x0e00,tea,2);
   EaWrite(0,     1,tea,2,0x0e00);
 
@@ -364,7 +364,7 @@ int OpPea(int op)
   OpStart(op,ea);
 
   ot("  ldr r11,[r7,#0x3c]\n");
-  EaCalc (1,0x003f, ea,0);
+  EaCalc (1,0x003f, ea,-1);
   ot("\n");
   ot("  sub r0,r11,#4 ;@ Predecrement A7\n");
   ot("  str r0,[r7,#0x3c] ;@ Save A7\n");

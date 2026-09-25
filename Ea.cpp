@@ -290,6 +290,59 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
     return 0;
   }
 
+#if MINIFY_JUMPTABLE
+  if (mask&1)
+  {
+    if (size<0) // lea
+    {
+      ot("  movs r2,r8,lsl #30\n");
+      ot("  bcs Op____\n");
+      ot("  bpl Eaabs%.4x\n",g_op);
+      ot("  ldr r0,[r7,#0x60] ;@ Get Memory base\n");
+      ot("  cmn r2,r2 ;@ Check for displacement\n");
+      ot("  sub r0,r4,r0 ;@ r0=PC\n");
+      ot("  ldrsh r3,[r4],#2 ;@ Get extension word\n"); pc_dirty=1;
+      ot("  bpl Eadisp%.4x\n",g_op);
+      ot("  movs r2,r3,lsr #12 ;@ r2=Index of Rn, carry set if Long\n");
+      ot("  and r2,r2,#0xf\n");
+      ot("  ldr r2,[r7,r2,lsl #2] ;@ r2=Rn.l\n");
+      ot("  sub r5,r5,#4\n"); opend_op_changes_cycles=1;
+#if HAVE_ARMv6
+      ot("  sxtb r3,r3 ;@ r3=Get 8-bit signed Disp\n");
+      ot("  sxthcc r2,r2 ;@ r2=Rn.w\n");
+      ot("  add r3,r3,r2 ;@ r3=Disp+Rn\n");
+#else
+      ot("  mov r3,r3,asl #24 ;@ r3=Get 8-bit signed Disp\n");
+      ot("  movcc r2,r2,asl #16 ;@ r2=Rn.w\n");
+      ot("  movcc r2,r2,asr #16\n");
+      ot("  add r3,r2,r3,asr #24 ;@ r3=Disp+Rn\n");
+#endif
+      ot("Eadisp%.4x%s\n",g_op,ms?"":":");
+      ot("  add r%d,r3,r0 ;@ r%d=Disp+PC+Rn\n",a,a);
+      ot("  b Eadone%.4x\n", g_op);
+      ot("Eaabs%.4x%s\n",g_op,ms?"":":");
+      ot("  ldrsh r%d,[r4],#2 ;@ Fetch Absolute Short address\n",a); pc_dirty=1;
+      ot(UAL(ldr,h,ne) "r2,[r4],#2 ;@ Fetch Absolute Long address\n");
+      ot("  subne r5,r5,#4\n"); opend_op_changes_cycles=1;
+      ot("  orrne r%d,r2,r%d,lsl #16\n",a,a);
+      ot("Eadone%.4x%s\n",g_op,ms?"":":");
+      return 0;
+    }
+  
+    if (a>=4 && a<=11) // read-modify-write
+    {
+      ot("  tst r8,#6\n");
+      ot("  bne Op____\n");
+      ot("  ldrsh r%d,[r4],#2 ;@ Fetch Absolute Short address\n",a); pc_dirty=1;
+      ot("  tst r8,#1\n");
+      ot(UAL(ldr,h,ne) "r2,[r4],#2 ;@ Fetch Absolute Long address\n");
+      ot("  subne r5,r5,#4\n"); opend_op_changes_cycles=1;
+      ot("  orrne r%d,r2,r%d,lsl #16\n",a,a);
+      return 0;
+    }
+  }
+#endif
+
   if (ea==0x38) // (aw)
   {
     ot("  ldrsh r%d,[r4],#2 ;@ Fetch Absolute Short address\n",a); pc_dirty=1;
@@ -369,6 +422,37 @@ int EaCalc(int a,int mask,int ea,int size,EaRWType type,int set_nz,int force_shi
   return 1;
 }
 
+void EaReadFixupValue(int v,int size,EaRWType type,int set_nz)
+{
+  const char *s=set_nz?"s":"";
+  int shift=32-(8<<size);
+  int flags_set=0;
+  if (type == earwt_sign_extend)
+  {
+    flags_set=SignExtend(v, 0, size, set_nz);
+  }
+  else if (type == earwt_zero_extend)
+  {
+    ZeroExtend(v, 0, size);
+  }
+  else
+  {
+    if (type == earwt_shifted_up && shift) {
+      ot("  mov%s r%d,r0,asl #%d\n",s,v,shift);
+      flags_set=1;
+    }
+    else if (v!=0) {
+      ot("  mov%s r%d,r0\n",s,v);
+      flags_set=1;
+    }
+  }
+
+  if (set_nz&&!flags_set)
+    ot("  tst r%d,r%d\n",v,v);
+
+  ot("\n"); 
+}
+
 // ---------------------------------------------------------------------------
 // Read effective address in (ARM Register 'a') to ARM register 'v'
 // 'a' and 'v' can be anything but 0 is generally best (for both)
@@ -377,7 +461,6 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
 {
   char text[32]="";
   const char *s="";
-  int flags_set=0;
   int shift=0;
 
   if (v==10 && flags_in_reg)
@@ -444,33 +527,12 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
   if (ea>=0x3a && ea<=0x3b) MemHandler(2,size,a,earead_check_addrerr); // Fetch
   else                      MemHandler(0,size,a,earead_check_addrerr); // Read
 
-  // defaults to 1, as most things begins with a read
+  // defaults to 1, as most things begin with a read
   earead_check_addrerr=1;
 
-  if (type == earwt_sign_extend)
-  {
-    flags_set=SignExtend(v, 0, size, set_nz);
-  }
-  else if (type == earwt_zero_extend)
-  {
-    ZeroExtend(v, 0, size);
-  }
-  else
-  {
-    if (type == earwt_shifted_up && shift) {
-      ot("  mov%s r%d,r0,asl #%d\n",s,v,shift);
-      flags_set=1;
-    }
-    else if (v!=0) {
-      ot("  mov%s r%d,r0\n",s,v);
-      flags_set=1;
-    }
-  }
+  EaReadFixupValue(v, size, type, set_nz);
 
-  if (set_nz&&!flags_set)
-    ot("  tst r%d,r%d\n",v,v);
-
-  ot("\n"); return 0;
+  return 0;
 }
 
 // calculate EA and  read
@@ -481,6 +543,38 @@ int EaRead(int a,int v,int ea,int size,int mask,EaRWType type,int set_nz,int for
 // r_ea is reg to store ea in (-1 means ea is not needed), r is dst reg
 int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz,int force_shift)
 {
+#if MINIFY_JUMPTABLE
+  if (ea>=0x38 && (mask&1) && r_ea==-1)
+  {
+    ot("  cmp r8,r8,lsl #29 ;@ check for immediate EA\n");
+    if (size<2)
+    {
+      const char *suffix = (type==earwt_zero_extend?Narm[size&3]:Sarm[size&3]);
+      ot(UAL(ldr,%s,vs) "r0,[r4],#2 ;@ Fetch immediate value\n",suffix); pc_dirty=1;
+      Cycles+=4; // Extra cycles
+    }
+    else
+    {
+ #if HAVE_UNALIGNED_ACCESSES
+      ot("  ldrvs r2,[r4],#4 ;@ Fetch immediate value (unaligned)\n"); pc_dirty=1;
+      ot("  movvs r0,r2,ror #16 ;@ Swap halfword order\n");
+ #else
+      ot(UAL(ldr,h,vs) "r2,[r4],#2 ;@ Fetch immediate value\n");
+      ot(UAL(ldr,h,vs) "r3,[r4],#2\n"); pc_dirty=1;
+      ot("  orrvs r0,r3,r2,lsl #16\n");
+ #endif
+      Cycles+=8; // Extra cycles
+    }
+    ot("  blvc EaCalcReadSpecial%d\n",8<<size); opend_op_changes_cycles=1;
+
+    // defaults to 1, as most things begin with a read
+    earead_check_addrerr=1;
+
+    EaReadFixupValue(r, size, type, set_nz);
+
+    return 0;
+  }
+#endif
   if (ea<0x10)
   {
     if (r_ea==-1)
@@ -506,17 +600,26 @@ int EaCalcRead(int r_ea,int r,int ea,int size,int mask,EaRWType type,int set_nz,
 }
 
 // Return 1 if we can read this ea
-int EaCanRead(int ea,int size)
+int EaCanRead(int ea,int size,int low)
 {
   if (size<0)
   {
     // LEA:
     // These don't make sense?:
     if (ea< 0x10) return 0; // Register
+#if MINIFY_JUMPTABLE
+    if (ea==0x3c&&!low) return 0; // Immediate
+#else
     if (ea==0x3c) return 0; // Immediate
+#endif
     if (ea>=0x18 && ea<0x28) return 0; // Pre/Post inc/dec An
   }
 
+#if MINIFY_JUMPTABLE
+  if (low) return 1;
+#else
+  (void)low;
+#endif
   if (ea<=0x3c) return 1;
   return 0;
 }
@@ -579,8 +682,13 @@ int EaWrite(int a,int v,int ea,int size,int mask,EaRWType type,int force_shift)
 }
 
 // Return 1 if we can write this ea
-int EaCanWrite(int ea)
+int EaCanWrite(int ea,int low)
 {
+#if MINIFY_JUMPTABLE
+  if (low) return 1;
+#else
+  (void)low;
+#endif
   if (ea<=0x39) return 1; // 3b?
   return 0;
 }

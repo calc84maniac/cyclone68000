@@ -75,6 +75,13 @@
 #define COMPRESS_JUMPTABLE          1
 
 /*
+ * This option reduces the size of Cyclone's jumptable from 256KB to 32KB.
+ * This adds one instruction to opcode dispatch and decreases the speed
+ * of some addressing modes, but greatly reduces RAM and cache usage.
+ */
+#define MINIFY_JUMPTABLE            0
+
+/*
  * If enabled, inlines unrolled division in each DIVU/DIVS opcode handler.
  * Saves 2 branches per divide, but costs ~1.3k instructions.
  */
